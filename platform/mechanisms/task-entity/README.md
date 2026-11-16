@@ -245,17 +245,27 @@ The day rhythm (`TaskDayPlan`, `task-day-plan.js`; spec:
   has it, one at a time; any it can't clear are named in one notice
   ("Pinned; couldn't clear N other pins"). A task that is not open is
   refused. Unpin removes it. Both go through `RenderSafe.mutate`.
-- **Now card.** At the top of Home and of today's daily note: the title, the
-  due chip, subtask progress, Copy prompt (newest prompt note), Copy message
-  (newest comms note with no `sent_at`), Open and Unpin. A copy button shows
-  only when there is a note to copy from.
-- **Plan the day.** Under the Now card: open on Home, collapsed on today's
-  daily note (never on other days). Now, Overdue (oldest due first), Due
-  today, today's meetings (`SpaceDailyDashboard.selectMeetings`) and Waiting
-  (`TaskDocs.waiting`; left out until that loads), with the counts in the
-  head. Every row opens its note. The panel stays open or closed as you left
-  it for the session. Home draws it as its own block and tells the dashboard
-  not to (`dayPlan: false`).
+- **Now card.** Inside the Plan the day panel, drawn once (on Home and on
+  today's daily note): the title, the due chip, subtask progress, Copy
+  prompt (newest prompt note), Copy message (newest comms note with no
+  `sent_at`), Open and Unpin. A copy button shows only when there is a note
+  to copy from.
+- **Plan the day.** Open on Home, collapsed on today's daily note (never on
+  other days). When a task is pinned the head leads with an accent `Now:
+  <title>` chip (cut to 32 characters, the full title in its aria-label);
+  tapping it opens the task without opening or closing the panel, so the
+  collapsed daily panel still shows what is Now. Then come count chips in
+  this order: `N overdue` (hidden
+  at 0, in the warning tone), `N due today` (always), `N waiting` and
+  `N meeting(s)` (each hidden at 0). The body shows only what the Tasks list
+  below does not: the Now card, Waiting (`TaskDocs.waiting`; left out until
+  that loads) and today's meetings (`SpaceDailyDashboard.selectMeetings`).
+  It lists no tasks: the Overdue and Due today lists were removed on
+  2026-11-16 because they repeated the Tasks list. With none of the three,
+  the body reads "Nothing pinned, waiting or scheduled. Your tasks are
+  below." Every row opens its note. The panel stays open or closed as you
+  left it for the session. Home draws it as its own block and tells the
+  dashboard not to (`dayPlan: false`).
 - **Shut down.** The button on the panel head and the command
   `Sauce: Shut down the day` (`sauce:shut-down-day`, `TaskDayPlanInit`).
   The modal lists Done today (read only) and Still open (overdue and due
