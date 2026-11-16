@@ -8,8 +8,10 @@ class TaskDayPlan {
     //   Pinning sets it on one task and clears it on every other task that
     //   has it; unpinning clears it.
     // - Plan the day. A panel on Home (open) and at the top of today's daily
-    //   note (collapsed). The head counts overdue, due today, waiting and
-    //   meetings; the body holds only what the Tasks list below does not
+    //   note (collapsed). The head leads with a Now chip when a task is
+    //   pinned (it opens the task, so the collapsed daily panel still shows
+    //   it), then counts overdue, due today, waiting and meetings; the body
+    //   holds only what the Tasks list below does not
     //   show: the Now card, the Waiting comms notes and today's meetings,
     //   each row clickable. It lists no tasks (removed 2026-11-16: the
     //   Overdue and Due today lists repeated the Tasks list).
@@ -57,6 +59,8 @@ class TaskDayPlan {
     renderNow(host, opts) { return TaskDayPlan.renderNow(host, opts); }
     renderPlan(host, opts) { return TaskDayPlan.renderPlan(host, opts); }
     countChips(counts) { return TaskDayPlan.countChips(counts); }
+    nowChipText(title) { return TaskDayPlan.nowChipText(title); }
+    get NOW_CHIP_MAX() { return TaskDayPlan.NOW_CHIP_MAX; }
     get EMPTY_TEXT() { return TaskDayPlan.EMPTY_TEXT; }
     renderDay(host, opts) { return TaskDayPlan.renderDay(host, opts); }
     openShutdown(opts) { return TaskDayPlan.openShutdown(opts); }
@@ -914,6 +918,18 @@ class TaskDayPlan {
     /** The message the panel body shows when it has no Now card, Waiting or meetings. */
     static get EMPTY_TEXT() { return 'Nothing pinned, waiting or scheduled. Your tasks are below.'; }
 
+    /** The longest Now title the head chip shows before it ends in an ellipsis. */
+    static get NOW_CHIP_MAX() { return 32; }
+
+    /** "Now: <title>", the title cut to NOW_CHIP_MAX characters with an ellipsis. */
+    static nowChipText(title) {
+        const t = TaskDayPlan._str(title).replace(/\s+/g, ' ');
+        const max = TaskDayPlan.NOW_CHIP_MAX;
+        const chars = Array.from(t);
+        const shown = chars.length > max ? chars.slice(0, max - 1).join('').replace(/\s+$/, '') + '…' : t;
+        return 'Now: ' + shown;
+    }
+
     /**
      * The count chips for the panel head, in order: overdue (left out at 0),
      * due today (always), waiting and meetings (each left out at 0), as
@@ -932,7 +948,9 @@ class TaskDayPlan {
 
     /**
      * The Plan the day panel: a <details> whose head holds the title, the
-     * counts and Shut down, and whose body holds the Now card, Waiting and
+     * Now chip (when a task is pinned; its click opens the task and never
+     * toggles the panel), the counts and Shut down, and whose body holds the
+     * Now card, Waiting and
      * today's meetings. It lists no tasks: the Tasks list below does.
      * opts: { app, model, today, surface, open }. The panel stays as the
      * person left it for the rest of the session.
@@ -957,6 +975,20 @@ class TaskDayPlan {
             icon.innerHTML = TaskDayPlan.ICON.sun;
             head.createEl('span', { cls: 'sauce-dp-plan-title', text: 'Plan the day' });
             const counts = head.createEl('span', { cls: 'sauce-dp-counts' });
+            if (model.now) {
+                const nowTitle = TaskDayPlan._str(model.now.title) || TaskDayPlan._base(model.now.path);
+                const nc = counts.createEl('button', { cls: 'sauce-dp-now-chip', text: TaskDayPlan.nowChipText(nowTitle) });
+                try {
+                    nc.setAttribute('type', 'button');
+                    nc.setAttribute('aria-label', 'Now: ' + nowTitle);
+                    nc.setAttribute('title', 'Now: ' + nowTitle);
+                    nc.setAttribute('data-path', model.now.path || '');
+                } catch (_e) {}
+                nc.addEventListener('click', (ev) => {
+                    try { ev.preventDefault(); ev.stopPropagation(); } catch (_e) {}
+                    TaskDayPlan._open(app, model.now.path, ev);
+                });
+            }
             for (const chip of TaskDayPlan.countChips(model.counts)) {
                 const c = counts.createEl('span', { cls: 'sauce-dp-count ' + chip.cls, text: chip.text });
                 try { c.setAttribute('data-count', chip.key); } catch (_e) {}
@@ -1335,6 +1367,8 @@ class TaskDayPlan {
             '.sauce-dp-count.is-overdue { color: var(--color-red, #dc2626); background: color-mix(in srgb, var(--color-red, #dc2626) 12%, transparent); }',
             '.sauce-dp-count.is-today { color: var(--color-orange, #ea580c); background: color-mix(in srgb, var(--color-orange, #ea580c) 12%, transparent); }',
             '.sauce-dp-count.is-today.is-zero { color: var(--text-muted); background: var(--background-modifier-hover); }',
+            'body .sauce-dp-now-chip.sauce-dp-now-chip { display: inline-flex; align-items: center; height: auto; min-height: 0; max-width: 100%; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--interactive-accent) 14%, transparent); box-shadow: none; color: var(--interactive-accent); font-size: 0.74em; font-weight: 700; line-height: 1.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }',
+            '@media (hover: hover) { body .sauce-dp-now-chip.sauce-dp-now-chip:hover { background: color-mix(in srgb, var(--interactive-accent) 24%, transparent); } }',
             '.sauce-dp-count.is-meetings { color: var(--color-blue, #2563eb); background: color-mix(in srgb, var(--color-blue, #2563eb) 12%, transparent); }',
             '.sauce-dp-count.is-waiting { color: var(--color-pink, #db2777); background: color-mix(in srgb, var(--color-pink, #db2777) 12%, transparent); }',
             'body .sauce-dp-btn.sauce-dp-shutdown { margin-left: auto; }',
@@ -1366,6 +1400,7 @@ class TaskDayPlan {
             'body .sauce-dp-pin.sauce-dp-pin.is-pinned { color: var(--interactive-accent); border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent); background: color-mix(in srgb, var(--interactive-accent) 12%, transparent); }',
             'body.is-mobile .sauce-dp-btn.sauce-dp-btn, body.is-mobile .sauce-dp-sd-choice.sauce-dp-sd-choice, body.is-mobile .sauce-dp-row, body.is-mobile .sauce-dp-sd-date { min-height: 36px; }',
             'body.is-mobile .sauce-dp-pin.sauce-dp-pin { width: 36px; height: 36px; }',
+            'body.is-mobile .sauce-dp-now-chip.sauce-dp-now-chip { min-height: 36px; }',
             'body.is-mobile .sauce-dp-actions > .sauce-dp-btn { flex: 1 1 auto; }',
             '@media (max-width: 480px) { .sauce-dp-row-meta { max-width: 45%; } body .sauce-dp-btn.sauce-dp-shutdown { margin-left: 0; } }',
         ].join('\n');

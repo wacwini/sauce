@@ -448,6 +448,60 @@ function setup(opts) {
     ok('DP-CHIPS-5 the drawn head follows the same rules', chipsOf(host) === '0 due today|2 meetings', chipsOf(host));
   }
 
+  {
+    const { DP, app } = setup();
+    const host = el('div');
+    DP.renderDay(host, { today: TODAY, surface: 'home', open: true });
+    const panel = host.one('sauce-dp-plan');
+    const counts = panel.one('sauce-dp-counts');
+    const chip = panel.one('sauce-dp-now-chip');
+    ok('DP-NOWCHIP-1 with a task pinned the head leads with a Now chip naming it, its full title in the aria-label',
+      chip && chip.tag === 'button' && counts.children[0] === chip && chip.parentNode.parentNode === panel.one('sauce-dp-plan-head')
+      && chip.textContent === 'Now: Ship routes' && chip.getAttribute('aria-label') === 'Now: Ship routes'
+      && chip.getAttribute('data-path') === 'spice/tasks/Ship routes/Ship routes.md', chip && chip.textContent);
+    let toggles = 0;
+    panel.addEventListener('toggle', () => { toggles++; });
+    const seen = { pd: 0, sp: 0 };
+    await chip.fire('click', { preventDefault() { seen.pd++; }, stopPropagation() { seen.sp++; } });
+    ok('DP-NOWCHIP-2 clicking it opens the task and stops the click, so the open Home panel stays open',
+      app._opened.some((o) => o.p === 'spice/tasks/Ship routes/Ship routes.md') && seen.pd === 1 && seen.sp === 1 && panel.open === true && toggles === 0, JSON.stringify(seen));
+    const daily = el('div');
+    DP.constructor._openState = {};
+    DP.renderDay(daily, { today: TODAY, surface: 'daily', open: false });
+    const dPanel = daily.one('sauce-dp-plan');
+    const dChip = dPanel.one('sauce-dp-now-chip');
+    const before = app._opened.length;
+    const seen2 = { pd: 0, sp: 0 };
+    await dChip.fire('click', { preventDefault() { seen2.pd++; }, stopPropagation() { seen2.sp++; } });
+    ok('DP-NOWCHIP-3 the collapsed daily panel shows the chip too, and clicking it opens the task without expanding the panel',
+      dChip.textContent === 'Now: Ship routes' && app._opened.length === before + 1 && seen2.pd === 1 && seen2.sp === 1 && dPanel.open === false);
+  }
+  {
+    const files = FILES.filter((f) => !/pinned_at/.test(JSON.stringify(f.fm || {})));
+    const { DP } = setup({ files });
+    const home = el('div');
+    DP.renderDay(home, { today: TODAY, surface: 'home', open: true });
+    const daily = el('div');
+    DP.renderDay(daily, { today: TODAY, surface: 'daily', open: false });
+    ok('DP-NOWCHIP-4 with nothing pinned there is no Now chip on either surface',
+      !home.one('sauce-dp-now-chip') && !daily.one('sauce-dp-now-chip') && home.one('sauce-dp-counts').children[0].className.indexOf('sauce-dp-count') === 0);
+  }
+  {
+    const DPC = loadDP({});
+    const long = 'Reconcile the November vendor invoices with finance';
+    ok('DP-NOWCHIP-5 a long title is cut to 32 characters ending in an ellipsis; one of 32 or fewer is kept whole',
+      DPC.nowChipText(long) === 'Now: Reconcile the November vendor i…'
+      && Array.from(DPC.nowChipText(long).slice(5)).length === 32
+      && DPC.nowChipText('x'.repeat(32)) === 'Now: ' + 'x'.repeat(32)
+      && DPC.nowChipText('x'.repeat(33)) === 'Now: ' + 'x'.repeat(31) + '…'
+      && DPC.nowChipText('Ship routes') === 'Now: Ship routes', DPC.nowChipText(long));
+    const host = el('div');
+    DPC.renderPlan(host, { model: DPC.planModel({ today: TODAY, tasks: [{ path: 'spice/tasks/L/L.md', title: long, status: 'open', pinned_at: '2026-11-13T09:00:00Z' }] }) });
+    const chip = host.one('sauce-dp-now-chip');
+    ok('DP-NOWCHIP-6 the drawn chip shows the cut title and carries the full one in its aria-label and tooltip',
+      chip && chip.textContent === 'Now: Reconcile the November vendor i…' && chip.getAttribute('aria-label') === 'Now: ' + long && chip.getAttribute('title') === 'Now: ' + long);
+  }
+
   // ---------- Shut down ----------
   {
     const order = [];

@@ -468,8 +468,9 @@ function descendants(el) {
       global.window.app = {
         vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p) => files.find((f) => f.path === p) || null },
         metadataCache: { getFileCache: (f) => ({ frontmatter: f.fm }) },
-        workspace: { openLinkText() {} },
+        workspace: { openLinkText: (p) => opened.push(p) },
       };
+      const opened = [];
       const modals = [];
       global.customJS = {
         SpaceDailyDashboard: {
@@ -500,8 +501,10 @@ function descendants(el) {
         if (modals[0]) modals[0].body(mb);
         return descendants(mb).filter((n) => hasC(n, "sauce-dp-sd-row")).map((n) => n["data-path"]);
       };
+      const nowChip = head ? descendants(head).find((n) => hasC(n, "sauce-dp-now-chip")) || null : null;
+      const countsEl = head ? descendants(head).find((n) => hasC(n, "sauce-dp-counts")) || null : null;
       const out = {
-        dv, day, all, panel, head, body, chips, rows, shutdown,
+        dv, day, all, panel, head, body, chips, rows, shutdown, nowChip, countsEl, opened,
         taskRows: rows.filter((r) => taskPaths.has(r["data-path"])),
         nowCards: descendants(dv.container).filter((n) => hasC(n, "sauce-dp-now")),
         bodyParts: body ? body.children.map((c) => (hasC(c, "sauce-dp-now") ? "now" : c["data-group"] || c.cls)) : [],
@@ -530,6 +533,15 @@ function descendants(el) {
       assertTrue("HOME-PLAN-REAL-5 Waiting and Meetings still render their rows",
         full.rows.map((r) => r["data-path"]).join("|") === "spice/tasks/Late/notes/Ask Jason.md|spice/meetings/notes/Standup-2026-07-02.md",
         full.rows.map((r) => r["data-path"]).join("|"));
+      const chip = full.nowChip;
+      assertTrue("HOME-PLAN-REAL-8 with a task pinned the head leads with the Now chip, its full title in the aria-label",
+        !!chip && full.countsEl.children[0] === chip && textOf(chip) === "Now: Due 1" && chip["aria-label"] === "Now: Due 1",
+        chip ? textOf(chip) : "no chip");
+      const seen = { pd: 0, sp: 0 };
+      const openBefore = full.panel.open;
+      if (chip) await chip._listeners.click[0]({ preventDefault() { seen.pd++; }, stopPropagation() { seen.sp++; } });
+      assertTrue("HOME-PLAN-REAL-9 clicking the Now chip opens the task and stops the click, so the panel stays open",
+        full.opened.includes("spice/tasks/Due 1/Due 1.md") && seen.pd === 1 && seen.sp === 1 && full.panel.open === openBefore && openBefore !== undefined, JSON.stringify([seen, full.opened]));
       const still = full.shutdown();
       assertTrue("HOME-PLAN-REAL-6 Shut down still lists the overdue and due-today tasks",
         still.length === 33 && still[0] === "spice/tasks/Late/Late.md" && still.includes("spice/tasks/Due 32/Due 32.md"), String(still.length));
@@ -538,7 +550,7 @@ function descendants(el) {
     const bare = await draw({});
     try {
       assertTrue("HOME-PLAN-REAL-7 with nothing pinned, waiting or scheduled: 0-count chips are hidden and the body shows one faint line",
-        bare.chips === "1 overdue|32 due today" && bare.nowCards.length === 0 && bare.taskRows.length === 0
+        bare.chips === "1 overdue|32 due today" && bare.nowCards.length === 0 && !bare.nowChip && bare.taskRows.length === 0
         && bare.bodyParts.join("|") === "sauce-dp-empty"
         && textOf(bare.body) === "Nothing pinned, waiting or scheduled. Your tasks are below.",
         bare.chips + " / " + (bare.body ? textOf(bare.body) : "no body"));

@@ -1421,6 +1421,13 @@ process.exitCode = 1;
       assert(cards.length === 1 && cards[0].parentNode === body, 'the Now card is drawn once, inside the panel');
       assert(rows.map((r) => r.getAttribute('data-path')).join('|') === 'spice/tasks/late-3/notes/Ask.md|spice/meetings/notes/Standup-' + P_TODAY + '.md',
         'Waiting and Meetings rows: ' + rows.map((r) => r.getAttribute('data-path')).join('|'));
+      const chip = panel.querySelector('.sauce-dp-now-chip');
+      assert(chip && panel.querySelector('.sauce-dp-counts')._children[0] === chip && chip.textContent === 'Now: Today alpha'
+        && chip.getAttribute('aria-label') === 'Now: Today alpha', 'the collapsed panel head leads with the Now chip');
+      const seen = { pd: 0, sp: 0 };
+      await chip._fire('click', { preventDefault() { seen.pd++; }, stopPropagation() { seen.sp++; } });
+      assert(full.calls.opened.includes('spice/tasks/today-a.md') && seen.pd === 1 && seen.sp === 1 && panel.open === false,
+        'the Now chip opens the task without expanding the panel: ' + JSON.stringify(seen));
       global.document = { body: {} };
       await panel.querySelector('.sauce-dp-shutdown')._fire('click');
       const mb = makeRichEl('div');
@@ -1438,6 +1445,7 @@ process.exitCode = 1;
       const body = panel.querySelector('.sauce-dp-plan-body');
       assert(body._children.length === 1 && body.textContent === 'Nothing pinned, waiting or scheduled. Your tasks are below.', 'empty line: ' + body.textContent);
       assert(panel.querySelectorAll('.sauce-dp-row').length === 0 && !bare.root.querySelector('.sauce-dp-now'), 'no rows, no Now card');
+      assert(!panel.querySelector('.sauce-dp-now-chip'), 'no Now chip with nothing pinned');
     } finally { bare.cleanup(); }
   });
 

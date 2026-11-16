@@ -251,7 +251,11 @@ The day rhythm (`TaskDayPlan`, `task-day-plan.js`; spec:
   `sent_at`), Open and Unpin. A copy button shows only when there is a note
   to copy from.
 - **Plan the day.** Open on Home, collapsed on today's daily note (never on
-  other days). The head shows count chips in this order: `N overdue` (hidden
+  other days). When a task is pinned the head leads with an accent `Now:
+  <title>` chip (cut to 32 characters, the full title in its aria-label);
+  tapping it opens the task without opening or closing the panel, so the
+  collapsed daily panel still shows what is Now. Then come count chips in
+  this order: `N overdue` (hidden
   at 0, in the warning tone), `N due today` (always), `N waiting` and
   `N meeting(s)` (each hidden at 0). The body shows only what the Tasks list
   below does not: the Now card, Waiting (`TaskDocs.waiting`; left out until
