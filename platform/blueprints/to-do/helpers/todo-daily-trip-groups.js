@@ -54,6 +54,8 @@ class ToDoDailyTripGroups {
         const canDrag = !mobile && !!TM && typeof TM.nest === 'function' && typeof TM.setTrip === 'function'
             && typeof TTL.wireRowDrag === 'function' && typeof TTL.wireGroupDrop === 'function';
 
+        // After an undo the lists draw again at once (this block keeps no state).
+        const redraw = () => { try { window.app.commands.executeCommandById('dataview:dataview-force-refresh-views'); } catch (_e) { /* Dataview renders on its own */ } };
         for (const [slug, tripTasks] of byTrip) {
             const label = tripTasks[0] && tripTasks[0].trip
                 ? String(tripTasks[0].trip).replace(/^\[\[/, '').replace(/\]\]$/, '').split('/').pop()
@@ -74,14 +76,14 @@ class ToDoDailyTripGroups {
                         if (drag && drag.hasProject) return 'This task is under a project; remove the project first';
                         return tripTasks.some((t) => t && t.path === p) ? 'Already in ' + label : '';
                     },
-                    apply: (p) => TM.setTrip(p, trip),
+                    apply: (p) => TM.setTrip(p, trip, { onUndone: redraw }),
                 });
             }
 
             for (const t of tripTasks) {
                 try {
-                    const row = TTL.renderTaskRow(dv.container, t, TD, canDrag ? { dragHandle: 'Drag onto a task or trip' } : undefined);
-                    if (canDrag) TTL.wireRowDrag(row, t, {});
+                    const row = TTL.renderTaskRow(dv.container, t, TD, canDrag ? { dragHandle: 'Drag onto a task or trip', onUndone: redraw } : { onUndone: redraw });
+                    if (canDrag) TTL.wireRowDrag(row, t, { onUndone: redraw });
                 } catch (_e) {}
             }
         }

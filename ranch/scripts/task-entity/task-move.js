@@ -10,6 +10,14 @@ class TaskMove {
     // TaskTodayList; this class owns the ⋯ menu entries and the pickers,
     // which work on every device. Spec:
     // Docs/superpowers/specs/2026-11-13-task-flow-design.md, section 6.
+    //
+    // Every move that lands shows the Undo bar (SauceUndoBar) for four
+    // seconds. The task's place and the fields a move can change are taken
+    // before the move (TaskDialog.moveSnapshot / TaskDocs.moveSnapshot, or
+    // the siblings' ranks for a reorder), and Undo puts them back through
+    // TaskDialog.moveBack / TaskDocs.moveBack inside RenderSafe.mutate. A
+    // refused or failed move shows no bar. opts.onUndone(result) lets the
+    // surface repaint after an undo.
 
     nest(fromPath, parent, opts) { return TaskMove.nest(fromPath, parent, opts); }
     setProject(path, project, opts) { return TaskMove.setProject(path, project, opts); }
@@ -24,6 +32,8 @@ class TaskMove {
     parentChoices(app, path, currentParent) { return TaskMove.parentChoices(app, path, currentParent); }
     refusalText(reason) { return TaskMove.refusalText(reason); }
     hasParent(task) { return TaskMove.hasParent(task); }
+    trackReorder(paths, run, opts) { return TaskMove.trackReorder(paths, run, opts); }
+    undoMessage(kind, info) { return TaskMove.undoMessage(kind, info); }
     get UNDER_PROJECT() { return TaskMove.UNDER_PROJECT; }
 
     static _cjs() {
@@ -98,6 +108,8 @@ class TaskMove {
             TaskMove._notice(TaskMove.refusalText(refusal));
             return { ok: false, reason: refusal };
         }
+        const snap = typeof TD.moveSnapshot === 'function' ? TD.moveSnapshot(app, fromPath) : null;
+        const parentTitle = top ? '' : TaskMove._parentTitle(app, parent);
         let out = null;
         const res = await RenderSafe.mutate({
             app,
@@ -114,6 +126,12 @@ class TaskMove {
         });
         if (!res || !res.ok) return { ok: false, reason: (res && res.error && res.error.message) || 'write failed' };
         if (out && out.due) TaskMove._notice('Top-level now, due ' + out.due + ' like its old parent');
+        if (snap && out && out.changed !== false) {
+            const post = { path: String(out.path), wrote: out.wrote };
+            TaskMove._offer(app, top ? TaskMove.undoMessage('top', { title: snap.title })
+                : TaskMove.undoMessage('nest', { title: snap.title, parent: parentTitle }),
+            [post.path, snap.path], () => TaskMove._undoTask(app, snap, post, o));
+        }
         try { if (typeof o.onDone === 'function') o.onDone(out); } catch (_e) {}
         return out;
     }
@@ -123,7 +141,9 @@ class TaskMove {
         const cjs = TaskMove._cjs();
         const TD = cjs && cjs.TaskDialog;
         if (!TD || typeof TD.projectFields !== 'function') { TaskMove._notice('Could not move the task right now'); return { ok: false, reason: 'unavailable' }; }
-        return TaskMove._writeFields(path, TD.projectFields(project), project ? 'Could not move the task to the project' : 'Could not clear the project', opts);
+        return TaskMove._writeFields(path, TD.projectFields(project), project ? 'Could not move the task to the project' : 'Could not clear the project', opts,
+            (snap) => (project ? TaskMove.undoMessage('to', { title: snap.title, to: TaskMove._nameOf(project) })
+                : TaskMove.undoMessage('out', { title: snap.title, from: TaskMove._unlink(snap.fields.project) || 'its project' })));
     }
 
     static get UNDER_PROJECT() { return 'This task is under a project; remove the project first'; }
@@ -149,30 +169,46 @@ class TaskMove {
                 return { ok: false, reason: 'under-project' };
             }
         }
-        return TaskMove._writeFields(path, TD.tripFields(trip), 'Could not move the task to the trip', opts);
+        return TaskMove._writeFields(path, TD.tripFields(trip), 'Could not move the task to the trip', opts,
+            (snap) => (trip ? TaskMove.undoMessage('to', { title: snap.title, to: TaskMove._nameOf(trip) })
+                : TaskMove.undoMessage('out', { title: snap.title, from: TaskMove._unlink(snap.fields.trip) || 'its trip' })));
     }
 
-    static async _writeFields(path, fields, failureMessage, opts) {
+    static async _writeFields(path, fields, failureMessage, opts, describe) {
         const o = opts || {};
         const cjs = TaskMove._cjs();
         const app = TaskMove._app(o);
         const RenderSafe = cjs && cjs.RenderSafe;
+        const TD = cjs && cjs.TaskDialog;
         const file = app && app.vault && typeof app.vault.getAbstractFileByPath === 'function'
             ? app.vault.getAbstractFileByPath(String(path)) : null;
         if (!file || !RenderSafe || typeof RenderSafe.mutate !== 'function') {
             TaskMove._notice(failureMessage);
             return { ok: false, reason: file ? 'unavailable' : 'task file not found' };
         }
+        const snap = TD && typeof TD.moveSnapshot === 'function' ? TD.moveSnapshot(app, path) : null;
+        const canDiff = !!(TD && typeof TD._movePick === 'function' && typeof TD._moveDiff === 'function');
+        let wrote = null;
         const res = await RenderSafe.mutate({
             app,
             path: String(path),
             failureMessage,
             optimistic: () => { if (typeof o.optimistic === 'function') o.optimistic(); },
-            write: () => app.fileManager.processFrontMatter(file, (fm) => { Object.assign(fm, fields); }),
+            write: () => app.fileManager.processFrontMatter(file, (fm) => {
+                const before = canDiff ? TD._movePick(fm) : null;
+                Object.assign(fm, fields);
+                wrote = canDiff ? TD._moveDiff(before, fm) : Object.assign({}, fields);
+            }),
             revert: () => { if (typeof o.revert === 'function') o.revert(); },
         });
         if (!res || !res.ok) return { ok: false, reason: 'write failed' };
         const out = { ok: true, path: String(path), fields };
+        const blank = (v) => (v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v)));
+        const changed = !!snap && !!wrote && Object.keys(wrote).some((k) => blank(snap.fields[k]) !== blank(wrote[k]));
+        if (changed && typeof describe === 'function') {
+            const post = { path: String(path), wrote };
+            TaskMove._offer(app, describe(snap), [post.path], () => TaskMove._undoTask(app, snap, post, o));
+        }
         try { if (typeof o.onDone === 'function') o.onDone(out); } catch (_e) {}
         return out;
     }
@@ -192,6 +228,8 @@ class TaskMove {
             TaskMove._notice('Could not move the note right now');
             return { ok: false, reason: 'unavailable' };
         }
+        const snap = typeof Docs.moveSnapshot === 'function' ? Docs.moveSnapshot(app, docPath) : null;
+        const taskTitle = TaskMove._titleOf(app, taskPath);
         let out = null;
         const res = await RenderSafe.mutate({
             app,
@@ -205,7 +243,252 @@ class TaskMove {
             },
         });
         if (!res || !res.ok) return { ok: false, reason: 'write failed' };
+        if (snap && out && !out.unchanged) {
+            const post = { path: String(out.path), wrote: out.wrote };
+            TaskMove._offer(app, TaskMove.undoMessage('note', { title: snap.name, to: taskTitle }),
+                [post.path, snap.path], () => TaskMove._undoNote(app, snap, post, o));
+        }
         try { if (typeof o.onDone === 'function') o.onDone(out); } catch (_e) {}
+        return out;
+    }
+
+    // ----- Undo -----
+
+    /**
+     * The Undo bar's words for a move. kind 'nest' { title, parent },
+     * 'top' { title }, 'to' { title, to } (a project or trip), 'out'
+     * { title, from } (project or trip cleared), 'note' { title, to },
+     * 'reorder' { parent }. Pure.
+     */
+    static undoMessage(kind, info) {
+        const i = info || {};
+        const q = (v) => "'" + String(v == null ? '' : v) + "'";
+        switch (kind) {
+            case 'nest': return 'Moved ' + q(i.title) + ' under ' + q(i.parent);
+            case 'top': return 'Moved ' + q(i.title) + ' to top level';
+            case 'to': return 'Moved ' + q(i.title) + ' to ' + String(i.to == null ? '' : i.to);
+            case 'out': return 'Moved ' + q(i.title) + ' out of ' + String(i.from == null ? '' : i.from);
+            case 'note': return 'Moved note ' + q(i.title) + ' to ' + q(i.to);
+            case 'reorder': return 'Reordered subtasks of ' + q(i.parent);
+            default: return 'Moved';
+        }
+    }
+
+    static _nameOf(v) {
+        if (v && typeof v === 'object') return String(v.name || v.slug || '').trim();
+        return TaskMove._unlink(v);
+    }
+
+    /** A note's title: its `title` frontmatter, else its basename. */
+    static _titleOf(app, path) {
+        try {
+            const f = app && app.vault ? app.vault.getAbstractFileByPath(String(path)) : null;
+            const fm = f ? (app.metadataCache.getFileCache(f) || {}).frontmatter || null : null;
+            if (fm && fm.title != null && String(fm.title).trim()) return String(fm.title).trim();
+            if (f && f.basename != null) return String(f.basename);
+        } catch (_e) { /* fall back to the path */ }
+        return TaskMove._base(path);
+    }
+
+    /** The title of the task `parent` names (a path, a file or a link). */
+    static _parentTitle(app, parent) {
+        const cjs = TaskMove._cjs();
+        const TD = cjs && cjs.TaskDialog;
+        try {
+            const target = TD && typeof TD._parentTarget === 'function' ? TD._parentTarget(app, parent) : null;
+            if (target && target.file) return TaskMove._titleOf(app, target.file.path);
+        } catch (_e) { /* fall back to the link text */ }
+        if (parent && typeof parent === 'object' && parent.path) return TaskMove._titleOf(app, parent.path);
+        return /\.md$/i.test(String(parent || '')) ? TaskMove._titleOf(app, parent) : TaskMove._unlink(parent);
+    }
+
+    static _bar() {
+        const cjs = TaskMove._cjs();
+        const Bar = cjs && cjs.SauceUndoBar;
+        return Bar && typeof Bar.show === 'function' ? Bar : null;
+    }
+
+    /** How long after a move its own late vault events are ignored by the bar's watch (ms). */
+    static get WATCH_GRACE_MS() { return 800; }
+
+    /**
+     * Watch the vault for a rename or modify of any of `paths` (the file's
+     * new path or the old path of a rename) and call `onTouch` once, then
+     * stop. Events in the first WATCH_GRACE_MS are the move's own (Obsidian
+     * reports a frontmatter write a moment after it lands) and are ignored.
+     * Returns { stop() }. Never throws.
+     */
+    static _watch(app, paths, onTouch) {
+        const vault = app && app.vault;
+        const want = new Set((paths || []).filter(Boolean).map(String));
+        const refs = [];
+        let armed = false;
+        let stopped = false;
+        let timer = null;
+        const w = (() => { try { return typeof window !== 'undefined' ? window : null; } catch (_e) { return null; } })();
+        const stop = () => {
+            if (stopped) return;
+            stopped = true;
+            for (const r of refs) { try { vault.offref(r); } catch (_e) {} }
+            try { if (timer != null) ((w && w.clearTimeout) || clearTimeout)(timer); } catch (_e) {}
+        };
+        if (!vault || typeof vault.on !== 'function' || !want.size) return { stop };
+        const hit = (p) => p != null && want.has(String(p));
+        const fire = () => {
+            if (!armed || stopped) return;
+            stop();
+            try { onTouch(); } catch (_e) {}
+        };
+        try { refs.push(vault.on('rename', (file, oldPath) => { if (hit(file && file.path) || hit(oldPath)) fire(); })); } catch (_e) {}
+        try { refs.push(vault.on('modify', (file) => { if (hit(file && file.path)) fire(); })); } catch (_e) {}
+        try {
+            const st = (w && typeof w.setTimeout === 'function') ? w.setTimeout.bind(w) : setTimeout;
+            timer = st(() => { timer = null; armed = true; }, TaskMove.WATCH_GRACE_MS);
+        } catch (_e) { armed = true; }
+        return { stop };
+    }
+
+    /**
+     * Show the Undo bar with `message`; Undo runs `undo()`. The bar closes
+     * by itself when anything else renames or modifies one of `paths`, so
+     * Undo never runs over a later change.
+     */
+    static _offer(app, message, paths, undo) {
+        const Bar = TaskMove._bar();
+        if (!Bar) return null;
+        let handle = null;
+        const watch = TaskMove._watch(app, paths, () => {
+            try { if (handle && typeof handle.close === 'function') handle.close(); } catch (_e) {}
+        });
+        try {
+            handle = Bar.show({
+                message,
+                onUndo: () => { watch.stop(); return undo(); },
+                onClose: () => watch.stop(),
+            });
+        } catch (_e) { handle = null; }
+        if (!handle) watch.stop();
+        return handle;
+    }
+
+    static _errText(e) { return String((e && e.message) || e || 'unknown error'); }
+
+    /**
+     * Undo one write inside RenderSafe.mutate. `run()` resolves the writer's
+     * { ok, reason }. A failure shows "Couldn't undo: <reason>" once (the
+     * mutate notice) and resolves { ok: false, reason, notified: true }.
+     */
+    static async _undoWrite(app, path, run) {
+        const cjs = TaskMove._cjs();
+        const RenderSafe = cjs && cjs.RenderSafe;
+        if (!RenderSafe || typeof RenderSafe.mutate !== 'function') return { ok: false, reason: 'not ready yet' };
+        let reason = '';
+        let out = null;
+        const res = await RenderSafe.mutate({
+            app,
+            path: String(path),
+            // Read after the write fails, so the Notice carries its reason.
+            get failureMessage() { return "Couldn't undo: " + (reason || 'unknown error'); },
+            write: async () => {
+                let r;
+                try { r = await run(); } catch (e) { reason = TaskMove._errText(e); throw e; }
+                if (!r || r.ok !== true) {
+                    reason = TaskMove.refusalText((r && r.reason) || 'undo failed');
+                    throw new Error(reason);
+                }
+                out = r;
+                return r;
+            },
+        });
+        if (!res || !res.ok || !out) return { ok: false, reason: reason || 'undo failed', notified: true };
+        return out;
+    }
+
+    static async _undoTask(app, snap, post, o) {
+        const cjs = TaskMove._cjs();
+        const TD = cjs && cjs.TaskDialog;
+        if (!TD || typeof TD.moveBack !== 'function') return { ok: false, reason: 'not ready yet' };
+        const r = await TaskMove._undoWrite(app, post.path, () => TD.moveBack(app, post.path, snap, post.wrote));
+        if (!r || r.ok !== true) return r;
+        if (r.renamed) TaskMove._notice("Restored, but renamed to '" + r.renamed + "'");
+        const out = Object.assign({}, r, { undone: true, fields: snap.fields });
+        try {
+            const TE = cjs.TaskEntity;
+            if (TE && typeof TE.parseNote === 'function') out.task = TE.parseNote(Object.assign({}, snap.fm, { path: r.path }));
+        } catch (_e) { /* the surface repaints from its own data */ }
+        const hook = o && o.onUndone;
+        try { if (typeof hook === 'function') hook(out); } catch (_e) {}
+        return out;
+    }
+
+    static async _undoNote(app, snap, post, o) {
+        const cjs = TaskMove._cjs();
+        const Docs = cjs && cjs.TaskDocs;
+        if (!Docs || typeof Docs.moveBack !== 'function') return { ok: false, reason: 'not ready yet' };
+        const r = await TaskMove._undoWrite(app, post.path, () => Docs.moveBack(app, post.path, snap, post.wrote));
+        if (!r || r.ok !== true) return r;
+        if (r.renamed) TaskMove._notice("Restored, but renamed to '" + r.renamed + "'");
+        const out = Object.assign({}, r, { undone: true });
+        const hook = o && o.onUndone;
+        try { if (typeof hook === 'function') hook(out); } catch (_e) {}
+        return out;
+    }
+
+    /**
+     * Run a subtask reorder with Undo. `paths` are the siblings in the
+     * group; their `field` values (default 'sibling_rank') are taken first,
+     * then `run()` reorders (TaskTodayList.manualOrder). When it wrote at
+     * least one rank the bar offers "Reordered subtasks of '<parent>'", and
+     * Undo writes the old value back (an absent key is removed) on each
+     * sibling whose rank still holds what the reorder wrote (`run()`'s
+     * `wrote`), inside RenderSafe.mutate. opts { app, parentTitle (or parentPath), field,
+     * onUndone({ ok, ranks: [{ path, value }] }) }. Resolves what `run()`
+     * resolved.
+     */
+    static async trackReorder(paths, run, opts) {
+        const o = opts || {};
+        const app = TaskMove._app(o);
+        const field = typeof o.field === 'string' && o.field ? o.field : 'sibling_rank';
+        const prior = [];
+        for (const p of Array.isArray(paths) ? paths : []) {
+            if (!p) continue;
+            let value;
+            try {
+                const f = app && app.vault ? app.vault.getAbstractFileByPath(String(p)) : null;
+                const fm = f ? (app.metadataCache.getFileCache(f) || {}).frontmatter || null : null;
+                value = fm && Object.prototype.hasOwnProperty.call(fm, field) ? fm[field] : undefined;
+            } catch (_e) { value = undefined; }
+            prior.push({ path: String(p), value });
+        }
+        const parentTitle = o.parentTitle || (o.parentPath ? TaskMove._titleOf(app, o.parentPath) : '');
+        const res = typeof run === 'function' ? await run() : undefined;
+        if (!res || !Array.isArray(res.written) || !res.written.length || !prior.length) return res;
+        const wrote = res.wrote && typeof res.wrote === 'object' ? res.wrote : null;
+        TaskMove._offer(app, TaskMove.undoMessage('reorder', { parent: parentTitle }),
+            prior.map((p) => p.path), () => TaskMove._undoRanks(app, prior, field, o, wrote));
+        return res;
+    }
+
+    // Put back each rank the reorder wrote, while it still holds that value.
+    static async _undoRanks(app, prior, field, o, wrote) {
+        const same = (a, b) => (a === undefined || b === undefined ? a === b : String(a) === String(b) && typeof a === typeof b);
+        const r = await TaskMove._undoWrite(app, prior[0].path, async () => {
+            for (const p of prior) {
+                if (wrote && !Object.prototype.hasOwnProperty.call(wrote, p.path)) continue;
+                const f = app && app.vault ? app.vault.getAbstractFileByPath(p.path) : null;
+                if (!f) continue;
+                await app.fileManager.processFrontMatter(f, (x) => {
+                    const now = Object.prototype.hasOwnProperty.call(x, field) ? x[field] : undefined;
+                    if (wrote && !same(now, wrote[p.path])) return;
+                    if (p.value === undefined) delete x[field]; else x[field] = p.value;
+                });
+            }
+            return { ok: true };
+        });
+        if (!r || r.ok !== true) return r;
+        const out = { ok: true, undone: true, field, ranks: prior.map((p) => ({ path: p.path, value: p.value })) };
+        const hook = o && o.onUndone;
+        try { if (typeof hook === 'function') hook(out); } catch (_e) {}
         return out;
     }
 

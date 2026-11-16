@@ -1296,7 +1296,7 @@ class ToDoDailyFilterView {
         // field write ({ fields }).
         // Shown only while a subtask is dragged; a drop there lifts it out.
         if (!isMobile && typeof TTL.wireTopLevelStrip === 'function') {
-            TTL.wireTopLevelStrip(root, { isMobile, before: listHost, onMoved: (res, from) => applyMovedResult(from, res) });
+            TTL.wireTopLevelStrip(root, { isMobile, before: listHost, onMoved: (res, from) => applyMovedResult(from, res), onUndone: (res) => applyUndone(res) });
         }
         const applyMovedResult = (fromPath, res) => {
             if (!res || res.ok !== true || !fromPath) return;
@@ -1309,6 +1309,18 @@ class ToDoDailyFilterView {
                 t.parent_task = parentPath ? parentPath.split('/').pop().replace(/\.md$/i, '') : '';
                 t.sibling_rank = null;
                 if (res.due) { t.due = res.due; t.rank = null; }
+            });
+            repaintLive();
+        };
+        // The Undo bar put a move back (TaskMove): the task takes its old
+        // path, parent, ranks, project and trip again.
+        const applyUndone = (res) => {
+            if (!res || res.ok !== true || !res.from || !res.task) return;
+            const back = res.task;
+            patchTask(res.from, (t) => {
+                for (const k of ['path', 'parent_path', 'parent_task', 'rank', 'sibling_rank', 'due', 'project', 'project_slug', 'trip', 'trip_slug']) {
+                    if (Object.prototype.hasOwnProperty.call(back, k)) t[k] = back[k];
+                }
             });
             repaintLive();
         };
@@ -1344,6 +1356,7 @@ class ToDoDailyFilterView {
                     onStart: (p) => { dragPath = p; },
                     onEnd: () => { dragPath = null; },
                     onMoved: (res, from) => applyMovedResult(from, res),
+                    onUndone: (res) => applyUndone(res),
                 });
                 return;
             }
@@ -1418,6 +1431,7 @@ class ToDoDailyFilterView {
             }
             if (manual) options.onMove = onMove;
             options.onMoved = (moved, res) => applyMovedResult(moved && moved.path, res);
+            options.onUndone = (moved, res) => applyUndone(res);
             let row = null;
             try {
                 row = TTL.renderTaskRow(list, task, TD, options);
@@ -1449,7 +1463,7 @@ class ToDoDailyFilterView {
                 apply: (p) => {
                     const TM = CJS.TaskMove;
                     if (!TM || typeof TM.setProject !== 'function') return undefined;
-                    return TM.setProject(p, project, { onDone: (res) => applyMovedResult(p, res) });
+                    return TM.setProject(p, project, { onDone: (res) => applyMovedResult(p, res), onUndone: (res) => applyUndone(res) });
                 },
             });
         };

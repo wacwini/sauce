@@ -60,6 +60,7 @@ class TaskNoteView {
     _renderInlineLinksLocal(el, mdText, sourcePath) { return TaskNoteView._renderInlineLinksLocal(el, mdText, sourcePath); }
     _rankOrder(list) { return TaskNoteView._rankOrder(list); }
     _applyMove(index, fromPath, toPath, newPath) { return TaskNoteView._applyMove(index, fromPath, toPath, newPath); }
+    _undoMove(index, res, TE) { return TaskNoteView._undoMove(index, res, TE); }
     _orderedChildren(parent, children) { return TaskNoteView._orderedChildren(parent, children); }
 
     // ---------- Static pure helpers ----------
@@ -589,6 +590,37 @@ class TaskNoteView {
     }
 
     /**
+     * Put a task back in the card's index after the Undo bar moved it back
+     * (TaskMove result `res`: { from, path, task }). The task at `res.from`
+     * goes under the parent its restored path sits in, its subtasks follow
+     * it, and the ranks and parent come from `res.task`. A task the index no
+     * longer holds (it was made top-level) is added back from `res.task`.
+     * Returns the task, or null. Pure apart from the index it updates.
+     */
+    static _undoMove(index, res, TE) {
+        const kids = index && index.children;
+        if (!kids || typeof kids.set !== 'function' || !res || !res.path || !res.from) return null;
+        let toPath = null;
+        try { toPath = TE && typeof TE.parentNotePathOf === 'function' ? TE.parentNotePathOf(res.path) || null : null; } catch (_e) { toPath = null; }
+        let held = false;
+        kids.forEach((list) => { if (!held && list.some((t) => t && t.path === res.from)) held = true; });
+        const TEMP = '\u0000undo';
+        if (!held) {
+            if (!res.task) return null;
+            kids.set(TEMP, [Object.assign({}, res.task, { path: res.from })]);
+        }
+        const moved = TaskNoteView._applyMove(index, res.from, toPath, res.path);
+        kids.delete(TEMP);
+        if (!moved) return null;
+        const t = res.task || {};
+        for (const k of ['sibling_rank', 'rank', 'due', 'project', 'project_slug', 'trip', 'trip_slug']) {
+            if (Object.prototype.hasOwnProperty.call(t, k)) moved[k] = t[k];
+        }
+        if (Object.prototype.hasOwnProperty.call(t, 'parent_task')) moved.parent_task = t.parent_task;
+        return moved;
+    }
+
+    /**
      * The subtasks of `parent` in the order its own card lists them: open ones
      * first by `sibling_rank` (unranked last, in the index's
      * order), then finished ones newest first. Status alone decides, never
@@ -1099,8 +1131,36 @@ class TaskNoteView {
                     const afterNoteMove = () => {
                         try { if (notesSection && typeof notesSection.__repaint === 'function') notesSection.__repaint(); } catch (_e) {}
                     };
+                    // The Undo bar put a move back (TaskMove): the task goes
+                    // back to its old place in the index with its old ranks.
+                    const afterUndo = (res) => {
+                        try {
+                            if (!res || res.ok !== true || !res.path || !res.from || !index || !index.children) return;
+                            const back = TaskNoteView._undoMove(index, res, TE);
+                            if (back) paintSubtasks();
+                        } catch (_e) { /* Dataview's next render shows it */ }
+                    };
+                    // A subtask reorder with Undo: TaskMove takes the siblings'
+                    // ranks first and offers the bar when a rank was written.
+                    const tracked = (pk, run) => {
+                        const c = orderOf(pk);
+                        if (!c) return undefined;
+                        const TMr = window.customJS && window.customJS.TaskMove;
+                        if (!TMr || typeof TMr.trackReorder !== 'function') return run(c);
+                        const group = (groupOrder.get(pk) || []).slice();
+                        return TMr.trackReorder(group.map((t) => t && t.path), () => run(c), {
+                            parentPath: pk,
+                            onUndone: (r) => {
+                                for (const pr of (r && r.ranks) || []) {
+                                    const t = group.find((x) => x && x.path === pr.path);
+                                    if (t) t.sibling_rank = TE && typeof TE._rankOf === 'function' ? TE._rankOf(pr.value) : (pr.value == null ? null : pr.value);
+                                }
+                                paintSubtasks();
+                            },
+                        });
+                    };
                     if (TTL && typeof TTL.wireTopLevelStrip === 'function') {
-                        TTL.wireTopLevelStrip(section, { isMobile, before: subList, onMoved: afterMove });
+                        TTL.wireTopLevelStrip(section, { isMobile, before: subList, onMoved: afterMove, onUndone: (res) => afterUndo(res) });
                     }
                     const addInput = section.createEl('input', { cls: 'sauce-tnv-add', type: 'text' });
                     addInput.placeholder = '+ Add subtask…';
@@ -1150,8 +1210,9 @@ class TaskNoteView {
                             ? { done: kids.filter((k) => k && k.status === 'done').length, total: kids.length }
                             : null;
                         const moveOpts = {
-                            onMove: (t, dir) => { const c = orderOf(pk); return c ? c.move(t, dir) : undefined; },
+                            onMove: (t, dir) => tracked(pk, (c) => c.move(t, dir)),
                             onMoved: (t, res) => { if (res && !res.fields) afterMove(res, t && t.path); },
+                            onUndone: (t, res) => afterUndo(res),
                         };
                         if (!isMobile) moveOpts.dragHandle = 'Drag to reorder, or onto a subtask';
                         const row = TTL.renderTaskRow(host, st, null, Object.assign({ showProject: false, showParent: false, copyPath: true, todayStr, onDone: markDoneLocally }, moveOpts));
@@ -1161,11 +1222,13 @@ class TaskNoteView {
                             if (typeof TTL.wireRowDrag === 'function') {
                                 TTL.wireRowDrag(row, st, {
                                     isMobile,
-                                    reorder: (from, to, place) => { const c = orderOf(pk); return c ? c.reorder(from, to, place) : undefined; },
+                                    reorder: (from, to, place) => tracked(pk, (c) => c.reorder(from, to, place)),
                                     canReorder: (from) => (groupOrder.get(pk) || []).some((t) => t && t.path === from),
                                     acceptNotes: true,
                                     onMoved: (res, from) => afterMove(res, from),
                                     onNoteMoved: afterNoteMove,
+                                    onUndone: (res) => afterUndo(res),
+                                    onNoteUndone: afterNoteMove,
                                 });
                             }
                         }
@@ -1397,7 +1460,8 @@ class TaskNoteView {
                         icon(more, 'more');
                         more.addEventListener('click', (ev) => {
                             try { ev.stopPropagation(); } catch (_e) {}
-                            MP.open(TM.noteMenuEntries(doc, { app: appRef, onDone: () => { try { repaint(); } catch (_e) {} } }), { anchor: more });
+                            const again = () => { try { repaint(); } catch (_e) {} };
+                            MP.open(TM.noteMenuEntries(doc, { app: appRef, onDone: again, onUndone: again }), { anchor: more });
                         });
                     };
                     if (TDocs && typeof TDocs.render === 'function') notesSection = TDocs.render(card, { app: appRef, taskPath: filePath, decorateRow });

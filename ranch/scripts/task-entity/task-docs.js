@@ -30,6 +30,8 @@ class TaskDocs {
     renderHeader(dv, opts) { return TaskDocs.renderHeader(dv, opts); }
     rename(app, docPath, title) { return TaskDocs.rename(app, docPath, title); }
     moveTo(app, docPath, taskPath) { return TaskDocs.moveTo(app, docPath, taskPath); }
+    moveSnapshot(app, docPath) { return TaskDocs.moveSnapshot(app, docPath); }
+    moveBack(app, docPath, snap, wrote) { return TaskDocs.moveBack(app, docPath, snap, wrote); }
     withHeader(text) { return TaskDocs.withHeader(text); }
     taskPathOf(docPath) { return TaskDocs.taskPathOf(docPath); }
     commsState(fm, followUps, today) { return TaskDocs.commsState(fm, followUps, today); }
@@ -368,7 +370,7 @@ class TaskDocs {
         }
         try {
             await app.fileManager.renameFile(file, to);
-            return { ok: true, path: to };
+            return { ok: true, path: to, wrote: { task: '[[' + taskName + ']]' } };
         } catch (e) {
             try {
                 await app.fileManager.processFrontMatter(file, (f) => {
@@ -377,6 +379,104 @@ class TaskDocs {
             } catch (_e) { /* best effort */ }
             return { ok: false, reason: String((e && e.message) || e) };
         }
+    }
+
+    /**
+     * What a note move could change, taken before the move so moveBack can
+     * put it back: { path, task, title } with `task` and `title` as they are
+     * on file (undefined when absent) and `name` its display title. Null
+     * when the note does not resolve.
+     */
+    static moveSnapshot(app, docPath) {
+        const file = app && app.vault ? app.vault.getAbstractFileByPath(docPath) : null;
+        if (!file || Array.isArray(file.children)) return null;
+        const fm = TaskDocs._fmOf(app, file) || {};
+        const own = (k) => (Object.prototype.hasOwnProperty.call(fm, k) ? fm[k] : undefined);
+        const base = String(file.basename != null ? file.basename : String(docPath).split('/').pop().replace(/\.md$/i, ''));
+        const name = fm.title != null && String(fm.title).trim() !== '' ? String(fm.title).trim() : base;
+        return { path: String(file.path), task: own('task'), title: own('title'), name };
+    }
+
+    /**
+     * Undo moveTo: put the note now at `docPath` (where the move left it)
+     * back where `snap` (moveSnapshot) found it. `wrote` is what the move
+     * wrote (moveTo's `wrote`, { task }); a key is put back only while it
+     * still holds that value. Without `wrote`, `task:` and `title` are put
+     * back. Refused before anything is written: the note is not at `docPath`
+     * ("couldn't find the note") or its old task note is gone ("its task
+     * moved"). Then, as moveTo does it, `task:` is written first and the
+     * note moves with fileManager.renameFile: to its old path when that is
+     * free, else into the old notes folder named by the rule create uses
+     * with the old task as parent, and `renamed` says the new name. If the
+     * move fails `task:` gets its post-move value back. Resolves
+     * { ok: true, path, from, renamed } or { ok: false, reason }.
+     */
+    static async moveBack(app, docPath, snap, wrote) {
+        const file = app && app.vault ? app.vault.getAbstractFileByPath(docPath) : null;
+        if (!file || Array.isArray(file.children)) return { ok: false, reason: "couldn't find the note" };
+        const s = snap || {};
+        if (!s.path) return { ok: false, reason: 'nothing to restore' };
+        const from = String(file.path);
+        const exists = (p) => !!app.vault.getAbstractFileByPath(p);
+        const oldTask = TaskDocs.taskPathOf(s.path);
+        if (oldTask && !exists(oldTask)) return { ok: false, reason: 'its task moved' };
+        const dir = s.path.slice(0, s.path.lastIndexOf('/'));
+        const oldBase = s.path.slice(s.path.lastIndexOf('/') + 1).replace(/\.md$/i, '');
+        let to = from;
+        let renamed = '';
+        if (from !== s.path) {
+            let name = oldBase;
+            if (exists(s.path)) {
+                const TE = TaskDocs._te();
+                let taskTitle = oldTask ? oldTask.split('/').pop().replace(/\.md$/i, '') : '';
+                try {
+                    const tf = oldTask ? app.vault.getAbstractFileByPath(oldTask) : null;
+                    const tfm = tf ? TaskDocs._fmOf(app, tf) : null;
+                    if (tfm && tfm.title != null && String(tfm.title).trim()) taskTitle = String(tfm.title).trim();
+                } catch (_e) {}
+                const taken = TaskDocs._takenNames(app);
+                const title = String(s.name || oldBase);
+                name = TE && typeof TE.taskName === 'function'
+                    ? TE.taskName(title, { parentTitle: taskTitle, taken })
+                    : title.replace(/[\\/:*?"<>|#^[\]]/g, '').trim() || 'Note';
+                for (let n = 2; exists(dir + '/' + name + '.md') && n < 10000; n++) name = oldBase + ' ' + n;
+                renamed = name;
+            }
+            to = dir + '/' + name + '.md';
+        }
+        const keys = wrote && typeof wrote === 'object' ? Object.keys(wrote).filter((k) => k === 'task' || k === 'title') : ['task', 'title'];
+        const same = (a, b) => (a === undefined || b === undefined ? a === b : JSON.stringify(a) === JSON.stringify(b));
+        const undoneFrom = {};
+        const restored = [];
+        try {
+            await app.fileManager.processFrontMatter(file, (f) => {
+                for (const k of keys) {
+                    const now = Object.prototype.hasOwnProperty.call(f, k) ? f[k] : undefined;
+                    if (wrote && !same(now, wrote[k])) continue;
+                    undoneFrom[k] = now;
+                    restored.push(k);
+                    if (s[k] === undefined) delete f[k]; else f[k] = s[k];
+                }
+            });
+        } catch (e) {
+            return { ok: false, reason: String((e && e.message) || e) };
+        }
+        if (to !== from) {
+            try {
+                if (!exists(dir)) {
+                    try { await app.vault.createFolder(dir); } catch (_e) { /* made meanwhile */ }
+                }
+                await app.fileManager.renameFile(file, to);
+            } catch (e) {
+                try {
+                    await app.fileManager.processFrontMatter(file, (f) => {
+                        for (const k of restored) { if (undoneFrom[k] === undefined) delete f[k]; else f[k] = undoneFrom[k]; }
+                    });
+                } catch (_e) { /* best effort */ }
+                return { ok: false, reason: String((e && e.message) || e) };
+            }
+        }
+        return { ok: true, path: to, from, renamed, restored };
     }
 
     /**
