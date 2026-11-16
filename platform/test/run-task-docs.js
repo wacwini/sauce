@@ -455,6 +455,7 @@ ok('TD-FOLDER a folder task keeps its notes in <Task>/notes; a flat task has non
       el.insertAdjacentHTML = (w, h) => { el._html += h; };
       el.removeChild = (ch) => { el.children.splice(el.children.indexOf(ch), 1); };
       el.remove = () => { if (el.parentNode) el.parentNode.removeChild(el); };
+      el.insertBefore = (ch, ref) => { const i = ref ? el.children.indexOf(ref) : -1; ch.parentNode = el; if (i < 0) el.children.push(ch); else el.children.splice(i, 0, ch); };
       el.focus = () => {}; el.select = () => {};
       Object.defineProperty(el, 'firstChild', { get: () => el.children[0] || null });
       return el;
@@ -528,6 +529,86 @@ ok('TD-FOLDER a folder task keeps its notes in <Task>/notes; a flat task has non
     ok('TD-COPY-PATH-CSS the path button shows on hover on desktop and always on a phone',
       /\.sauce-tnv-doc:hover \.sauce-tnv-doc-path/.test(TD._CSS) && /body\.is-mobile \.sauce-tnv-doc \.sauce-tnv-doc-path \{ opacity: 1;/.test(TD._CSS));
     win.customJS.TaskTodayList = priorTTL;
+
+    const modals = [];
+    const trashed = [];
+    let trashFails = false;
+    win.customJS.SauceModal = { open: (o) => { modals.push(o); return {}; } };
+    rApp.fileManager.trashFile = async (f) => { if (trashFails) throw new Error('locked'); trashed.push(f.path); rApp._files.delete(f.path); rApp._relink(); };
+    const hadDoc = typeof globalThis.document !== 'undefined';
+    if (!hadDoc) globalThis.document = {};
+    const confirmLast = () => { const b = modals[modals.length - 1].buttons.find((x) => x.label === 'Delete'); return b.onClick(); };
+    const cancelLast = () => modals[modals.length - 1].onClose('cancel');
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+
+    const sec3 = TD.render(mk('div'), { app: rApp, taskPath: `${R}/Redis.md` });
+    const rows3 = by(sec3, 'sauce-tnv-doc');
+    const titles3 = rows3.map((r) => by(r, 'sauce-tnv-doc-title')[0].textContent);
+    const trashBtns = rows3.map((r) => by(r, 'sauce-tnv-doc-trash')[0]);
+    ok('TD-TRASH-ROW every note on the task card has its own Delete button, named for that note',
+      rows3.length >= 2 && trashBtns.every((b, i) => b && b._attrs['aria-label'] === 'Delete ' + titles3[i]) && by(sec3, 'sauce-tnv-doc-trash').length === rows3.length,
+      JSON.stringify(trashBtns.map((b) => b && b._attrs['aria-label'])));
+
+    const mBefore = mutations.length;
+    let p = trashBtns[0]._l.click({ stopPropagation() {} });
+    const asked = modals[modals.length - 1];
+    cancelLast();
+    await p;
+    ok('TD-TRASH-ASK Delete asks first, naming the note; Cancel deletes nothing',
+      asked && asked.title === 'Delete note?' && trashed.length === 0 && mutations.length === mBefore && by(sec3, 'sauce-tnv-doc').length === rows3.length);
+
+    const firstPath = (() => { const ds = TD.list(rApp, `${R}/Redis.md`); return ds[0].path; })();
+    trashFails = true;
+    p = trashBtns[0]._l.click({ stopPropagation() {} });
+    confirmLast();
+    await p; await tick();
+    ok('TD-TRASH-REVERT a delete that fails puts the row back and keeps the file',
+      trashed.length === 0 && rApp._files.has(firstPath) && by(sec3, 'sauce-tnv-doc').length === rows3.length
+      && mutations[mutations.length - 1].failureMessage === 'Could not delete the note');
+
+    trashFails = false;
+    p = trashBtns[0]._l.click({ stopPropagation() {} });
+    confirmLast();
+    await p; await tick();
+    const left = by(sec3, 'sauce-tnv-doc-title').map((n) => n.textContent);
+    ok('TD-TRASH-ROW-DELETE Delete moves only that note to the trash through RenderSafe.mutate, and the list redraws without it',
+      trashed.length === 1 && trashed[0] === firstPath && !rApp._files.has(firstPath)
+      && left.length === rows3.length - 1 && JSON.stringify(left) === JSON.stringify(titles3.slice(1)), JSON.stringify({ trashed, left }));
+
+    const HP = `${R}/notes/Redis failover prompt.md`;
+    const HDocs = TD.list(rApp, `${R}/Redis.md`).map((d) => d.path);
+    const hdv = { container: mk('div'), current: () => ({ file: { path: HDocs[0] } }) };
+    const opens = [];
+    const leaf = { view: { containerEl: hdv.container }, openFile: (f) => { opens.push(f.path); } };
+    const priorWs = rApp.workspace;
+    rApp.workspace = Object.assign({}, priorWs, { iterateAllLeaves: (fn) => { fn({ view: { containerEl: mk('div') } }); fn(leaf); } });
+    const hcard = TD.renderHeader(hdv, { app: rApp });
+    const hTrash = by(hcard, 'sauce-tdv-trash')[0];
+    p = hTrash._l.click({ stopPropagation() {} });
+    confirmLast();
+    await p; await tick();
+    ok('TD-TRASH-HEADER the note\'s header card has Delete too: it trashes the note you are in and takes that tab to its task',
+      hTrash && HDocs.length && trashed[1] === HDocs[0] && opens.length === 1 && opens[0] === `${R}/Redis.md`, JSON.stringify({ trashed, opens, HP }));
+    rApp.workspace = priorWs;
+
+    const keep = TD.list(rApp, `${R}/Redis.md`).length;
+    const g1 = await TD.trashNote(rApp, `${R}/Redis.md`);
+    const g2 = await TD.trashNote(rApp, `${R}/notes/Missing.md`);
+    rApp._files.set(`${R}/notes/Sub.md`, { path: `${R}/notes/Sub.md`, basename: 'Sub', _fm: { type: 'task' }, stat: { mtime: 0 } }); rApp._relink();
+    const g3 = await TD.trashNote(rApp, `${R}/notes/Sub.md`);
+    ok('TD-TRASH-GUARD only a task\'s notes can be deleted this way: a task, a task filed in notes/ and a missing note are refused',
+      g1.ok === false && g2.ok === false && g3.ok === false && rApp._files.has(`${R}/Redis.md`) && rApp._files.has(`${R}/notes/Sub.md`)
+      && trashed.length === 2 && TD.list(rApp, `${R}/Redis.md`).length === keep, JSON.stringify([g1, g2, g3]));
+
+    const cfg = (v) => ({ vault: { getConfig: (k) => (k === 'trashOption' ? v : null) } });
+    ok('TD-TRASH-WHERE the dialog says where the note goes from the vault\'s Deleted files setting, and warns when that is permanent',
+      /system trash/.test(TD.trashWhere(cfg('system'))) && /\.trash folder/.test(TD.trashWhere(cfg('local')))
+      && /permanently/.test(TD.trashWhere(cfg('none'))) && /system trash/.test(TD.trashWhere({})));
+    ok('TD-TRASH-CSS the Delete button shows on hover on desktop, always on a phone, and hides while renaming',
+      /\.sauce-tnv-doc:hover \.sauce-tnv-doc-trash/.test(TD._CSS) && /body\.is-mobile \.sauce-tnv-doc \.sauce-tnv-doc-trash \{ opacity: 1;/.test(TD._CSS)
+      && /is-renaming \.sauce-tdv-trash \{ display: none; \}/.test(TD._CSS));
+    if (!hadDoc) delete globalThis.document;
+    win.customJS.SauceModal = undefined;
   }
 
   {
