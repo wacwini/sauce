@@ -29,6 +29,7 @@ class TaskDocs {
     openReview(app, taskPath, cands) { return TaskDocs.openReview(app, taskPath, cands); }
     renderHeader(dv, opts) { return TaskDocs.renderHeader(dv, opts); }
     rename(app, docPath, title) { return TaskDocs.rename(app, docPath, title); }
+    fullPath(path, appRef) { return TaskDocs.fullPath(path, appRef); }
     moveTo(app, docPath, taskPath) { return TaskDocs.moveTo(app, docPath, taskPath); }
     moveSnapshot(app, docPath) { return TaskDocs.moveSnapshot(app, docPath); }
     moveBack(app, docPath, snap, wrote) { return TaskDocs.moveBack(app, docPath, snap, wrote); }
@@ -1488,6 +1489,12 @@ class TaskDocs {
             '.sauce-tdv-title-row.is-renaming .sauce-tdv-rename { display: none; }',
             '@media (hover: hover) { .sauce-tnv-doc .sauce-tnv-doc-rename { opacity: 0; transition: opacity 120ms ease; } .sauce-tnv-doc:hover .sauce-tnv-doc-rename, .sauce-tnv-doc .sauce-tnv-doc-rename:focus-visible { opacity: 1; } }',
             'body.is-mobile .sauce-tnv-doc .sauce-tnv-doc-rename { opacity: 1; }',
+            'body .sauce-tdv-path.sauce-tdv-path, body .sauce-tnv-doc-path.sauce-tnv-doc-path { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; min-height: 0; padding: 0; border: none; border-radius: var(--radius-s, 6px); background: transparent; box-shadow: none; color: var(--text-faint); cursor: pointer; }',
+            '@media (hover: hover) { body .sauce-tdv-path.sauce-tdv-path:hover, body .sauce-tnv-doc-path.sauce-tnv-doc-path:hover { color: var(--text-normal); background: var(--background-modifier-hover); } }',
+            'body .sauce-tdv-path.is-copied, body .sauce-tnv-doc-path.is-copied { color: var(--color-green, #4c9a5a); }',
+            '.sauce-tdv-title-row.is-renaming .sauce-tdv-path { display: none; }',
+            '@media (hover: hover) { .sauce-tnv-doc .sauce-tnv-doc-path { opacity: 0; transition: opacity 120ms ease; } .sauce-tnv-doc:hover .sauce-tnv-doc-path, .sauce-tnv-doc .sauce-tnv-doc-path:focus-visible, .sauce-tnv-doc .sauce-tnv-doc-path.is-copied { opacity: 1; } }',
+            'body.is-mobile .sauce-tnv-doc .sauce-tnv-doc-path { opacity: 1; width: 36px; height: 36px; }',
             'body .sauce-tdv-rename-input.sauce-tdv-rename-input { box-sizing: border-box; width: 100%; min-width: 0; height: auto; min-height: 32px; padding: 4px 8px; border: 1px solid var(--interactive-accent); border-radius: var(--radius-s, 6px); background: var(--background-primary); color: var(--text-normal); font: inherit; }',
             'body .sauce-tdv-title-row .sauce-tdv-rename-input.sauce-tdv-rename-input { font-size: 1.2em; font-weight: 700; }',
             'body.is-phone .sauce-tdv-rename-input.sauce-tdv-rename-input { font-size: 16px; }',
@@ -1593,6 +1600,57 @@ class TaskDocs {
 
     static _notice(msg, ms) { try { new Notice(msg, ms); } catch (_e) {} }
 
+    /**
+     * The note's full path on disk, the same way task rows build it
+     * (TaskTodayList.fullPath): the vault folder joined to `path`; on mobile,
+     * where the vault has no folder on disk, the vault path. Never throws.
+     */
+    static fullPath(path, appRef) {
+        const rel = String(path == null ? '' : path);
+        if (!rel) return '';
+        try {
+            const TTL = window.customJS && window.customJS.TaskTodayList;
+            if (TTL && typeof TTL.fullPath === 'function') return String(TTL.fullPath(rel, appRef) || rel);
+        } catch (_e) { /* fall back below */ }
+        try {
+            const ad = appRef && appRef.vault && appRef.vault.adapter;
+            if (ad && typeof ad.getFullPath === 'function') { const f = ad.getFullPath(rel); if (f) return String(f); }
+            if (ad && typeof ad.getBasePath === 'function') {
+                const base = String(ad.getBasePath() || '');
+                if (base) return base.replace(/[\\/]+$/, '') + '/' + rel;
+            }
+        } catch (_e) { /* the vault path is still useful */ }
+        return rel;
+    }
+
+    /**
+     * A "Copy full path" icon button in `host`, like the one on task rows.
+     * `pathOf` is the vault path, or a function returning it at click time
+     * (so a renamed note copies its new path). Never throws.
+     */
+    static _pathButton(host, cls, pathOf, app) {
+        try {
+            const btn = host.createEl('button', { cls });
+            try { btn.setAttribute('type', 'button'); btn.setAttribute('aria-label', 'Copy full path'); btn.setAttribute('title', 'Copy full path'); } catch (_e) {}
+            btn.innerHTML = TaskDocs._ICONS.copy;
+            btn.addEventListener('click', async (ev) => {
+                try { ev.stopPropagation(); } catch (_e) {}
+                const rel = typeof pathOf === 'function' ? pathOf() : pathOf;
+                const full = TaskDocs.fullPath(rel, app);
+                if (!full) return;
+                const ok = await TaskDocs._copyText(full);
+                TaskDocs._notice(ok ? 'Copied ' + full : 'Could not copy the path', ok ? 2500 : 5000);
+                if (!ok) return;
+                try {
+                    btn.innerHTML = TaskDocs._ICONS.check;
+                    btn.classList.add('is-copied');
+                    setTimeout(() => { try { btn.innerHTML = TaskDocs._ICONS.copy; btn.classList.remove('is-copied'); } catch (_e) {} }, 1200);
+                } catch (_e) {}
+            });
+            return btn;
+        } catch (_e) { return null; }
+    }
+
     /** Each kind's colour: the header card's tint and its icon on the task card. */
     static get TONES() {
         return {
@@ -1620,6 +1678,7 @@ class TaskDocs {
             reply: svg('<path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>', 15),
             claude: svg('<path d="M12 3v3"/><path d="M12 18v3"/><path d="m5.6 5.6 2.1 2.1"/><path d="m16.3 16.3 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m5.6 18.4 2.1-2.1"/><path d="m16.3 7.7 2.1-2.1"/>', 15),
             resume: svg('<polygon points="6 3 20 12 6 21 6 3"/>', 15),
+            check: svg('<path d="M20 6 9 17l-5-5"/>', 15),
         };
     }
 
@@ -1767,6 +1826,7 @@ class TaskDocs {
             const renameBtn = titleRow.createEl('button', { cls: 'sauce-tdv-rename' });
             try { renameBtn.setAttribute('type', 'button'); renameBtn.setAttribute('aria-label', 'Rename note'); renameBtn.setAttribute('title', 'Rename note'); } catch (_e) {}
             renameBtn.innerHTML = ICON.pencil;
+            TaskDocs._pathButton(titleRow, 'sauce-tdv-path', () => file.path, app);
             const startRename = () => {
                 if (titleRow.classList.contains && titleRow.classList.contains('is-renaming')) return;
                 const prior = titleEl.textContent;
@@ -2087,6 +2147,7 @@ class TaskDocs {
                             }
                         });
                     });
+                    TaskDocs._pathButton(row, 'sauce-tnv-doc-path', d.path, app);
                     if (meta.copy) {
                         const btn = row.createEl('button', { cls: 'sauce-tnv-doc-copy', text: meta.copyLabel });
                         try { btn.setAttribute('type', 'button'); } catch (_e) {}
