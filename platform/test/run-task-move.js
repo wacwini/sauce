@@ -940,15 +940,168 @@ const overOf = (d) => ({ types: d.types.slice(), getData: () => '', dropEffect: 
         ok('TM-UNDO-NO-BAR a refused loop, a nest onto its own parent, a refused trip and a failed move show no bar',
           shows.length === 0 && failed.ok === false, JSON.stringify(shows.map((s) => s.message)));
       }
-      // the undo is checked for loops, and a failed undo says why
+      // the undo is checked for loops
+      {
+        const app = makeApp({
+          'spice/tasks/P.md': { status: 'open', title: 'Papa' },
+          'spice/tasks/Q.md': { status: 'open', title: 'Quebec', parent_task: '[[P]]' },
+        });
+        const { TM, shows } = withBar(app);
+        await TM.nest('spice/tasks/Q.md', null);
+        await TM.nest('spice/tasks/P.md', 'spice/tasks/Q.md');
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-LOOP an undo that would put a task inside its own subtask is refused and changes nothing',
+          u && u.ok === false && /can't go inside/.test(u.reason) && fmOf(app, 'spice/tasks/Q.md').parent_task === '', JSON.stringify(u));
+      }
+      // the old parent, project or task has moved since
       {
         const app = makeApp(undoSeed());
         const { TM, shows } = withBar(app);
         await TM.nest('spice/tasks/A/B/B.md', null);
-        await TM.nest('spice/tasks/A/A.md', 'spice/tasks/B/B.md');
+        const post = Object.assign({}, fmOf(app, 'spice/tasks/B/B.md'));
+        await app.fileManager.renameFile(app._folders.get('spice/tasks/A'), 'spice/tasks/Alpha');
+        const n0 = app._log.renames.length;
         const u = await shows[0].onUndo();
-        ok('TM-UNDO-LOOP an undo that would put a task inside its own subtask is refused and changes nothing',
-          u && u.ok === false && /itself or of its own subtask|can't go inside/.test(u.reason) && !!fmOf(app, 'spice/tasks/B/B.md'), JSON.stringify(u));
+        ok('TM-UNDO-PARENT-MOVED the old parent moved: refused with "its old parent moved", no folder made where it was, nothing written',
+          u && u.ok === false && u.reason === 'its old parent moved' && !app._folders.has('spice/tasks/A')
+          && app._log.renames.length === n0 && JSON.stringify(fmOf(app, 'spice/tasks/B/B.md')) === JSON.stringify(post), JSON.stringify(u));
+      }
+      {
+        const app = makeApp(undoSeed());
+        const { TM, shows } = withBar(app);
+        await TM.setProject('spice/tasks/A/B/B.md', { name: 'Zeta', slug: 'zeta' });
+        await app.fileManager.renameFile(app._files.get('spice/tasks/A/A.md'), 'spice/tasks/A/Alpha.md');
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-PARENT-NOTE-GONE the old parent\'s folder note is gone (the task itself did not move): refused with "its old parent moved"',
+          u && u.ok === false && u.reason === 'its old parent moved' && fmOf(app, 'spice/tasks/A/B/B.md').project === '[[Zeta]]', JSON.stringify(u));
+      }
+      {
+        const app = makeApp(undoSeed({ 'spice/projects/Atlas/Atlas.md': { type: 'project', title: 'Atlas' } }));
+        const { TM, shows } = withBar(app);
+        await TM.setProject('spice/tasks/C/C.md', { name: 'Zeta', slug: 'zeta' });
+        app._files.delete('spice/projects/Atlas/Atlas.md');
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-PROJECT-MOVED the old project note is gone: the header move\'s undo is refused and the task keeps its project',
+          u && u.ok === false && u.reason === 'its old project moved' && fmOf(app, 'spice/tasks/C/C.md').project === '[[Zeta]]', JSON.stringify(u));
+      }
+      {
+        const app = makeApp(undoSeed({ 'spice/tasks/A/notes/Plan.md': { type: 'task-doc', kind: 'plan', title: 'Plan', task: '[[A]]' } }));
+        const { TM, shows } = withBar(app);
+        await TM.moveNote('spice/tasks/A/notes/Plan.md', 'spice/tasks/C/C.md');
+        app._files.delete('spice/tasks/A/A.md');
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-NOTE-TASK-MOVED the note\'s old task is gone: refused with "its task moved", the note stays',
+          u && u.ok === false && u.reason === 'its task moved' && fmOf(app, 'spice/tasks/C/notes/Plan.md').task === '[[C]]', JSON.stringify(u));
+      }
+      {
+        const app = makeApp(undoSeed());
+        const { TM, shows } = withBar(app);
+        await TM.nest('spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+        await app.fileManager.renameFile(app._folders.get('spice/tasks/A/C'), 'spice/tasks/A/Charlie');
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-PATH-MOVED the task is no longer where the move left it: refused, "couldn\'t find the task"',
+          u && u.ok === false && u.reason === "couldn't find the task" && !app._files.has('spice/tasks/C/C.md'), JSON.stringify(u));
+      }
+      // only what the move wrote, and only while it still holds that value
+      {
+        const app = makeApp(undoSeed());
+        const { TM, shows } = withBar(app);
+        await TM.nest('spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+        fmOf(app, 'spice/tasks/A/C/C.md').sibling_rank = 9;
+        fmOf(app, 'spice/tasks/A/C/C.md').priority = 'high';
+        const u = await shows[0].onUndo();
+        const fm = fmOf(app, 'spice/tasks/C/C.md');
+        ok('TM-UNDO-ONLY-WROTE undo puts back only what the move wrote; a field changed since (sibling_rank) and one it never wrote stay',
+          u && u.ok && fm && fm.parent_task === undefined && fm.sibling_rank === 9 && fm.priority === 'high' && fm.rank === 3
+          && JSON.stringify(u.restored) === JSON.stringify(['parent_task']), JSON.stringify([u, fm]));
+      }
+      {
+        const app = makeApp(undoSeed());
+        const { TM, shows } = withBar(app);
+        await TM.setProject('spice/tasks/C/C.md', { name: 'Zeta', slug: 'zeta' });
+        fmOf(app, 'spice/tasks/C/C.md').project = '[[Omega]]';
+        const u = await shows[0].onUndo();
+        const fm = fmOf(app, 'spice/tasks/C/C.md');
+        ok('TM-UNDO-ONLY-WROTE-PROJECT a project changed again since stays; the slug the move wrote goes back',
+          u && u.ok && fm.project === '[[Omega]]' && fm.project_slug === 'atlas', JSON.stringify(fm));
+      }
+      {
+        const app = makeApp(undoSeed({
+          'spice/tasks/A/S1/S1.md': { status: 'open', title: 'S1', parent_task: '[[A]]' },
+          'spice/tasks/A/S2/S2.md': { status: 'open', title: 'S2', parent_task: '[[A]]', sibling_rank: 5 },
+          'spice/tasks/A/S3/S3.md': { status: 'open', title: 'S3', parent_task: '[[A]]', sibling_rank: '7' },
+        }));
+        const { TM, shows } = withBar(app);
+        const list = ['S1', 'S2', 'S3'].map((n) => ({ path: `spice/tasks/A/${n}/${n}.md`, sibling_rank: TEClass._rankOf(fmOf(app, `spice/tasks/A/${n}/${n}.md`).sibling_rank) }));
+        const setFields = async (p, fields) => { await app.fileManager.processFrontMatter(app._files.get(p), (fm) => Object.assign(fm, fields)); return { ok: true }; };
+        await TM.trackReorder(list.map((t) => t.path), () => TTLClass.applyManualOrder([list[2], list[0], list[1]], {
+          setFields, renumber: (paths, ranks) => TEClass.renumber(paths, ranks), field: 'sibling_rank', classify: () => 'ok',
+        }), { app, parentPath: 'spice/tasks/A/A.md' });
+        fmOf(app, 'spice/tasks/A/S2/S2.md').sibling_rank = 50;
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-ONLY-WROTE-REORDER a sibling re-ranked since keeps its rank; the others go back',
+          u && u.ok && fmOf(app, 'spice/tasks/A/S2/S2.md').sibling_rank === 50 && !('sibling_rank' in fmOf(app, 'spice/tasks/A/S1/S1.md'))
+          && fmOf(app, 'spice/tasks/A/S3/S3.md').sibling_rank === '7');
+      }
+      // fields first, then the rename; a failed rename puts the post-move fields back
+      {
+        const app = makeApp(undoSeed({ 'spice/tasks/A/notes/Plan.md': { type: 'task-doc', kind: 'plan', title: 'Plan', task: '[[A]]' } }));
+        const { TM, shows } = withBar(app);
+        await TM.nest('spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+        await TM.moveNote('spice/tasks/A/notes/Plan.md', 'spice/tasks/D/D.md');
+        const seq = [];
+        const pf = app.fileManager.processFrontMatter;
+        const rf = app.fileManager.renameFile;
+        app.fileManager.processFrontMatter = async (f, fn) => { seq.push('fm:' + f.path); return pf(f, fn); };
+        app.fileManager.renameFile = async (f, to) => { seq.push('rename:' + f.path); return rf(f, to); };
+        await shows[0].onUndo();
+        const taskOrder = seq.slice();
+        seq.length = 0;
+        await shows[1].onUndo();
+        ok('TM-UNDO-ORDER undo writes the fields first, then renames back, for a task and for a note (reparent\'s order)',
+          taskOrder[0] === 'fm:spice/tasks/A/C/C.md' && taskOrder.some((x) => /^rename:/.test(x)) && taskOrder.findIndex((x) => /^rename:/.test(x)) > 0
+          && seq[0] === 'fm:spice/tasks/D/notes/Plan.md' && seq[1] === 'rename:spice/tasks/D/notes/Plan.md', JSON.stringify([taskOrder, seq]));
+      }
+      {
+        const app = makeApp(undoSeed({ 'spice/tasks/A/notes/Plan.md': { type: 'task-doc', kind: 'plan', title: 'Plan', task: '[[A]]' } }));
+        const { TM, shows } = withBar(app);
+        await TM.moveNote('spice/tasks/A/notes/Plan.md', 'spice/tasks/C/C.md');
+        app._failRename = true;
+        const u = await shows[0].onUndo();
+        ok('TM-UNDO-NOTE-FAIL a failed note rename puts task: back to its post-move value',
+          u && u.ok === false && fmOf(app, 'spice/tasks/C/notes/Plan.md').task === '[[C]]', JSON.stringify(u));
+      }
+      // the bar closes when something else touches the moved task
+      {
+        const app = makeApp(undoSeed());
+        const handlers = { rename: [], modify: [] };
+        app.vault.on = (name, fn) => { handlers[name].push(fn); return { name, fn }; };
+        app.vault.offref = (ref) => { handlers[ref.name] = handlers[ref.name].filter((f) => f !== ref.fn); };
+        const env = setup(app);
+        const timers = [];
+        global.window.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+        global.window.clearTimeout = () => {};
+        const shows = [];
+        let closed = 0;
+        env.cjs.SauceUndoBar = { show: (o) => { shows.push(o); return { close: () => { closed += 1; if (o.onClose) o.onClose(); } }; } };
+        const TM = env.cjs.TaskMove;
+        const fire = (name, ...args) => { for (const fn of handlers[name].slice()) fn(...args); };
+        await TM.nest('spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+        const watching = handlers.rename.length === 1 && handlers.modify.length === 1;
+        fire('modify', { path: 'spice/tasks/A/C/C.md' });
+        const graceIgnored = closed === 0;
+        for (const fn of timers.splice(0)) fn();
+        fire('modify', { path: 'spice/tasks/D/D.md' });
+        const otherIgnored = closed === 0;
+        fire('rename', { path: 'spice/tasks/A/Charlie/Charlie.md' }, 'spice/tasks/A/C/C.md');
+        const closedOnTouch = closed === 1 && handlers.rename.length === 0 && handlers.modify.length === 0;
+        await TM.nest('spice/tasks/D/D.md', 'spice/tasks/A/A.md');
+        for (const fn of timers.splice(0)) fn();
+        const u = await shows[1].onUndo();
+        const ownWritesIgnored = u && u.ok && closed === 1 && handlers.modify.length === 0;
+        ok('TM-UNDO-WATCH the bar closes when another rename or modify touches the moved task; the move\'s own late events, other notes and the undo\'s own writes do not close it',
+          watching && graceIgnored && otherIgnored && closedOnTouch && ownWritesIgnored,
+          JSON.stringify({ watching, graceIgnored, otherIgnored, closedOnTouch, ownWritesIgnored }));
       }
       {
         const app = makeApp(undoSeed());
@@ -959,9 +1112,10 @@ const overOf = (d) => ({ types: d.types.slice(), getData: () => '', dropEffect: 
         app._failRename = true;
         const n0 = app._log.notices.length;
         const u = await env.shows[0].onUndo();
-        ok('TM-UNDO-FAIL with the real RenderSafe a failed undo shows one Notice: Couldn\'t undo: <reason>, and tells the bar it did',
+        ok('TM-UNDO-FAIL with the real RenderSafe a failed undo shows one Notice: Couldn\'t undo: <reason>, tells the bar it did, and leaves the post-move fields',
           u && u.ok === false && u.notified === true && JSON.stringify(app._log.notices.slice(n0)) === JSON.stringify(["Couldn't undo: rename failed"])
-          && !!fmOf(app, 'spice/tasks/A/C/C.md'), JSON.stringify([u, app._log.notices.slice(n0)]));
+          && !!fmOf(app, 'spice/tasks/A/C/C.md') && fmOf(app, 'spice/tasks/A/C/C.md').parent_task === '[[A]]'
+          && fmOf(app, 'spice/tasks/A/C/C.md').sibling_rank === '', JSON.stringify([u, app._log.notices.slice(n0), fmOf(app, 'spice/tasks/A/C/C.md')]));
       }
       // the menu and the drag hand onUndone on
       {
@@ -1021,6 +1175,16 @@ const overOf = (d) => ({ types: d.types.slice(), getData: () => '', dropEffect: 
         ok('TM-UNDO-WIRED the To-Do view and the task card repaint on undo; the card\'s reorders go through trackReorder',
           (view.match(/onUndone/g) || []).length >= 4 && /const applyUndone = /.test(view)
           && /trackReorder\(/.test(card) && /onUndone: \(res\) => afterUndo\(res\)/.test(card) && /onNoteUndone: afterNoteMove/.test(card));
+        const dash = read('platform/blueprints/daily/helpers/space-daily-dashboard.js');
+        const groups = read('platform/blueprints/to-do/helpers/todo-daily-project-groups.js');
+        const trips = read('platform/blueprints/to-do/helpers/todo-daily-trip-groups.js');
+        const redraws = (src, setter) => /const redraw = \(\) => \{ try \{ window\.app\.commands\.executeCommandById\('dataview:dataview-force-refresh-views'\)/.test(src)
+          && new RegExp(setter + '\\(p, (project|trip), \\{ onUndone: redraw \\}\\)').test(src)
+          && /TTL\.wireRowDrag\(row, t, \{ onUndone: redraw \}\)/.test(src) && /onUndone: redraw \}/.test(src);
+        ok('TM-UNDO-WIRED-REST the daily dashboard panel patches its model on undo (rows, drag, Make top-level strip); the project and trip groups redraw Dataview at once',
+          /const onUndone = \(task, res\) => \{/.test(dash) && /onRescheduled, onDone, onMoved, onUndone \}/.test(dash)
+          && (dash.match(/onUndone: \(res\) => onUndone\(null, res\)/g) || []).length === 2
+          && redraws(groups, 'TM\\.setProject') && redraws(trips, 'TM\\.setTrip'));
       }
     }
 

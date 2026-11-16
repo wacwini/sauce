@@ -113,7 +113,9 @@ class TaskDialog {
     reparent(app, task, parent, opts) { return TaskDialog.reparent(app, task, parent, opts); }
     reparentRefusal(app, task, parent) { return TaskDialog.reparentRefusal(app, task, parent); }
     moveSnapshot(app, task) { return TaskDialog.moveSnapshot(app, task); }
-    moveBack(app, task, snap) { return TaskDialog.moveBack(app, task, snap); }
+    moveBack(app, task, snap, wrote) { return TaskDialog.moveBack(app, task, snap, wrote); }
+    _movePick(fm) { return TaskDialog._movePick(fm); }
+    _moveDiff(before, fm) { return TaskDialog._moveDiff(before, fm); }
     get MOVE_FIELDS() { return TaskDialog.MOVE_FIELDS; }
     _parentLinkOf(app, parent) { return TaskDialog._parentLinkOf(app, parent); }
     _renameTaskFolder(app, oldFolder, newFolder, newName) { return TaskDialog._renameTaskFolder(app, oldFolder, newFolder, newName); }
@@ -2581,11 +2583,14 @@ class TaskDialog {
             return { ok: true, path: String(file.path), changed: false };
         }
         const hadSibling = prior.sibling_rank != null && String(prior.sibling_rank) !== '';
+        let wrote = {};
         await app.fileManager.processFrontMatter(file, (fm) => {
+            const before = TaskDialog._movePick(fm);
             if (typeof o.write === 'function') o.write(fm, { inheritedDue });
             else if (inheritedDue) { fm.due = inheritedDue; fm.rank = ''; }
             if (linkChanged) fm.parent_task = link;
             if (changed && hadSibling) fm.sibling_rank = '';
+            wrote = TaskDialog._moveDiff(before, fm);
         });
         if (typeof o.beforeMove === 'function') await o.beforeMove();
         let finalPath = String(file.path || '');
@@ -2602,7 +2607,7 @@ class TaskDialog {
                 return { ok: false, reason: 'move-failed', error: e };
             }
         }
-        const out = { ok: true, path: finalPath, changed };
+        const out = { ok: true, path: finalPath, changed, wrote };
         if (inheritedDue) out.due = inheritedDue;
         return out;
     }
@@ -2612,70 +2617,119 @@ class TaskDialog {
         return ['parent_task', 'rank', 'sibling_rank', 'project', 'project_slug', 'trip', 'trip_slug', 'due'];
     }
 
+    /** A copy of the MOVE_FIELDS values in `fm` (undefined when absent). Pure. */
+    static _movePick(fm) {
+        const copy = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
+        const out = {};
+        const f = fm || {};
+        for (const k of TaskDialog.MOVE_FIELDS) out[k] = Object.prototype.hasOwnProperty.call(f, k) ? copy(f[k]) : undefined;
+        return out;
+    }
+
+    /** The MOVE_FIELDS values `fm` holds that differ from `before` (_movePick): what a write wrote. Pure. */
+    static _moveDiff(before, fm) {
+        const after = TaskDialog._movePick(fm);
+        const out = {};
+        for (const k of TaskDialog.MOVE_FIELDS) {
+            if (!TaskDialog._sameValue(before[k], after[k])) out[k] = after[k];
+        }
+        return out;
+    }
+
+    /** True when two frontmatter values are the same (undefined only equals undefined). Pure. */
+    static _sameValue(a, b) {
+        if (a === undefined || b === undefined) return a === b;
+        try { return JSON.stringify(a) === JSON.stringify(b); } catch (_e) { return a === b; }
+    }
+
     /**
      * Where a task is and what a move could change, taken before the move so
-     * moveBack can put it back exactly: { path, folder, parentPath, title,
-     * fields, fm }. `folder` is its task folder ('' for a flat note),
-     * `parentPath` the parent note its folder sits in ('' when none),
-     * `fields` each MOVE_FIELDS value as it is on file (undefined when the
-     * key is absent) and `fm` a copy of the whole frontmatter. Null when the
-     * task file does not resolve.
+     * moveBack can put it back: { path, folder, parentPath, home, homeNote,
+     * projectPath, tripPath, title, fields, fm }. `folder` is its task folder
+     * ('' for a flat note), `parentPath` the parent note its folder sits in
+     * ('' when none), `home` the folder it sits in and `homeNote` that
+     * folder's own note when there was one (a task folder), `projectPath` /
+     * `tripPath` the notes its project and trip links reached, `fields` each
+     * MOVE_FIELDS value as it is on file (undefined when absent) and `fm` a
+     * copy of the whole frontmatter. Null when the task file does not resolve.
      */
     static moveSnapshot(app, task) {
         const file = TaskDialog._taskFileOf(app, task);
         if (!file) return null;
         const TE = TaskDialog._taskEntity();
         const path = String(file.path);
-        const copy = (v) => (v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v);
         const fm = TaskDialog._fmOf(app, file) || {};
-        const fields = {};
-        for (const k of TaskDialog.MOVE_FIELDS) {
-            fields[k] = Object.prototype.hasOwnProperty.call(fm, k) ? copy(fm[k]) : undefined;
-        }
+        const fields = TaskDialog._movePick(fm);
+        const exists = (p) => !!(p && app.vault && typeof app.vault.getAbstractFileByPath === 'function' && app.vault.getAbstractFileByPath(p));
         const folderNote = !!(TE && TE.isFolderNote(path) && TE.rootFolderOf(path));
         let parentPath = '';
         try { parentPath = folderNote && typeof TE.parentNotePathOf === 'function' ? TE.parentNotePathOf(path) || '' : ''; } catch (_e) { parentPath = ''; }
+        const folder = folderNote ? TE.taskFolderOf(path) : '';
+        const dirOf = (p) => (String(p).lastIndexOf('/') < 0 ? '' : String(p).slice(0, String(p).lastIndexOf('/')));
+        const home = dirOf(folder || path);
+        const homeNoteCandidate = home ? home + '/' + home.slice(home.lastIndexOf('/') + 1) + '.md' : '';
+        const homeNote = exists(homeNoteCandidate) ? homeNoteCandidate : '';
+        const linkPath = (v) => {
+            const name = TaskDialog._linkBasename(TaskDialog._flatLink(v));
+            if (!name) return '';
+            try {
+                const dest = app.metadataCache && typeof app.metadataCache.getFirstLinkpathDest === 'function'
+                    ? app.metadataCache.getFirstLinkpathDest(name, path) : null;
+                return dest && dest.path ? String(dest.path) : '';
+            } catch (_e) { return ''; }
+        };
         const title = fm.title != null && String(fm.title).trim() !== '' ? String(fm.title).trim()
             : String(file.basename != null ? file.basename : TaskDialog._linkBasename(path));
         let all = {};
         try { all = JSON.parse(JSON.stringify(fm)); } catch (_e) { all = Object.assign({}, fm); }
-        return { path, folder: folderNote ? TE.taskFolderOf(path) : '', parentPath, title, fields, fm: all };
+        return {
+            path, folder, parentPath, home, homeNote,
+            projectPath: linkPath(fields.project), tripPath: linkPath(fields.trip),
+            title, fields, fm: all,
+        };
     }
 
     /**
-     * Put a moved task back where `snap` (moveSnapshot) found it: the undo of
-     * a nest, Make top-level, project or trip move. The old parent is checked
-     * with reparentRefusal first, so undo never makes a loop. A task folder
-     * goes back to its old path with one renameFile on the folder when that
-     * path is free; when it is taken, it goes into the same parent folder
-     * named by the reparent rule (`<Name> 2`, `<Name> 3`, …, also free
-     * vault-wide) and `renamed` says the new name. A flat note goes back to
-     * its old path the same way. Then one processFrontMatter puts every
-     * MOVE_FIELDS value back (an absent key is removed). Resolves { ok: true,
-     * path, from, renamed } or { ok: false, reason }. Not a gesture
-     * lifecycle: TaskMove wraps it in RenderSafe.mutate.
+     * Undo a nest, Make top-level, project or trip move: put the task now at
+     * `task` (the path the move left it at) back where `snap` (moveSnapshot)
+     * found it. `wrote` is what the move wrote (reparent's or the field
+     * write's `wrote`); only those keys are put back, and only while they
+     * still hold the value the move wrote, so a change made since stays.
+     * Without `wrote` every MOVE_FIELDS value is put back.
+     *
+     * Refused before anything is written: the task is not at `task`
+     * ("couldn't find the task"); its old parent note, or the task folder it
+     * sat in, is gone ("its old parent moved"); the project or trip note it
+     * pointed at is gone; or the old parent would now make a loop
+     * (reparentRefusal). Then, in reparent's order, one processFrontMatter
+     * puts the fields back and the file moves: a task folder goes back to its
+     * old path with one renameFile on the folder when that path is free,
+     * else into the same parent named by the reparent rule (`<Name> 2`, …,
+     * free vault-wide), and `renamed` says the new name; a flat note the
+     * same way. A folder is only made when it never held a task note. If the
+     * move fails the fields get their post-move values back. Resolves
+     * { ok: true, path, from, renamed, restored } or { ok: false, reason }.
+     * Not a gesture lifecycle: TaskMove wraps it in RenderSafe.mutate.
      */
-    static async moveBack(app, task, snap) {
+    static async moveBack(app, task, snap, wrote) {
         const file = TaskDialog._taskFileOf(app, task);
-        if (!app || !file) return { ok: false, reason: 'task file not found' };
+        if (!app || !file) return { ok: false, reason: "couldn't find the task" };
         const s = snap || {};
         if (!s.path || !s.fields) return { ok: false, reason: 'nothing to restore' };
         const TE = TaskDialog._taskEntity();
-        const exists = (p) => !!(app.vault && typeof app.vault.getAbstractFileByPath === 'function' && app.vault.getAbstractFileByPath(p));
+        const exists = (p) => !!(p && app.vault && typeof app.vault.getAbstractFileByPath === 'function' && app.vault.getAbstractFileByPath(p));
         const from = String(file.path);
-        const oldParent = s.parentPath && exists(s.parentPath) ? s.parentPath : (TaskDialog._flatLink(s.fields.parent_task) || null);
+        const moves = from !== s.path;
+        const keys = wrote && typeof wrote === 'object' ? Object.keys(wrote) : TaskDialog.MOVE_FIELDS.slice();
+        if (s.parentPath && !exists(s.parentPath)) return { ok: false, reason: 'its old parent moved' };
+        if (moves && s.homeNote && !exists(s.homeNote)) return { ok: false, reason: 'its old parent moved' };
+        if (keys.includes('project') && s.projectPath && !exists(s.projectPath)) return { ok: false, reason: 'its old project moved' };
+        if (keys.includes('trip') && s.tripPath && !exists(s.tripPath)) return { ok: false, reason: 'its old trip moved' };
+        const oldParent = s.parentPath || TaskDialog._flatLink(s.fields.parent_task) || null;
         const refusal = oldParent ? TaskDialog.reparentRefusal(app, file, oldParent) : '';
         if (refusal) return { ok: false, reason: refusal };
         const dirOf = (p) => (String(p).lastIndexOf('/') < 0 ? '' : String(p).slice(0, String(p).lastIndexOf('/')));
         const baseOf = (p) => String(p).slice(String(p).lastIndexOf('/') + 1);
-        const ensure = async (dir) => {
-            const parts = String(dir).split('/');
-            for (let i = 1; i <= parts.length; i++) {
-                const d = parts.slice(0, i).join('/');
-                if (!d || exists(d)) continue;
-                try { await app.vault.createFolder(d); } catch (_e) { /* made meanwhile */ }
-            }
-        };
         const ownLower = String(file.basename != null ? file.basename : TaskDialog._linkBasename(from)).toLowerCase();
         const freeName = (dir, name, ext) => {
             if (!exists(dir + '/' + name + ext)) return name;
@@ -2687,39 +2741,65 @@ class TaskDialog {
             }
             return name;
         };
-        let finalPath = from;
-        let renamed = '';
         const curFolder = TE && TE.isFolderNote(from) && TE.rootFolderOf(from) ? TE.taskFolderOf(from) : '';
-        if (from !== s.path) {
+        let plan = null;
+        if (moves) {
             if (s.folder && curFolder) {
                 if (curFolder !== s.folder) {
                     const destParent = dirOf(s.folder);
                     const oldName = baseOf(s.folder);
-                    await ensure(destParent);
                     const name = freeName(destParent, oldName, '');
-                    const newFolder = destParent + '/' + name;
-                    await TaskDialog._renameTaskFolder(app, curFolder, newFolder, name);
-                    finalPath = newFolder + '/' + name + '.md';
-                    if (name !== oldName) renamed = name;
+                    plan = { kind: 'folder', dir: destParent, name, oldName, to: destParent + '/' + name + '/' + name + '.md' };
                 }
             } else {
                 const dir = dirOf(s.path);
                 const oldName = baseOf(s.path).replace(/\.md$/i, '');
-                await ensure(dir);
                 const name = freeName(dir, oldName, '.md');
-                finalPath = dir + '/' + name + '.md';
-                await app.fileManager.renameFile(file, finalPath);
-                if (name !== oldName) renamed = name;
+                plan = { kind: 'file', dir, name, oldName, to: dir + '/' + name + '.md' };
             }
         }
-        const fields = s.fields;
+        const restored = [];
+        const undoneFrom = {};
         await app.fileManager.processFrontMatter(file, (fm) => {
-            for (const k of Object.keys(fields)) {
-                if (fields[k] === undefined) delete fm[k];
-                else fm[k] = fields[k];
+            for (const k of keys) {
+                const has = Object.prototype.hasOwnProperty.call(fm, k);
+                const now = has ? fm[k] : undefined;
+                if (wrote && !TaskDialog._sameValue(now, wrote[k])) continue;
+                undoneFrom[k] = now;
+                restored.push(k);
+                if (s.fields[k] === undefined) delete fm[k];
+                else fm[k] = s.fields[k];
             }
         });
-        return { ok: true, path: finalPath, from, renamed };
+        let finalPath = from;
+        if (plan) {
+            try {
+                if (!exists(plan.dir)) {
+                    if (s.homeNote) throw new Error('its old parent moved');
+                    const parts = plan.dir.split('/');
+                    for (let i = 1; i <= parts.length; i++) {
+                        const d = parts.slice(0, i).join('/');
+                        if (!d || exists(d)) continue;
+                        try { await app.vault.createFolder(d); } catch (_e) { /* made meanwhile */ }
+                    }
+                }
+                if (plan.kind === 'folder') await TaskDialog._renameTaskFolder(app, curFolder, plan.dir + '/' + plan.name, plan.name);
+                else await app.fileManager.renameFile(file, plan.to);
+                finalPath = plan.to;
+            } catch (e) {
+                try {
+                    await app.fileManager.processFrontMatter(file, (fm) => {
+                        for (const k of restored) {
+                            if (undoneFrom[k] === undefined) delete fm[k];
+                            else fm[k] = undoneFrom[k];
+                        }
+                    });
+                } catch (_e) { /* best effort */ }
+                return { ok: false, reason: String((e && e.message) || e) };
+            }
+        }
+        const renamed = plan && plan.name !== plan.oldName ? plan.name : '';
+        return { ok: true, path: finalPath, from, renamed, restored };
     }
 
     /**

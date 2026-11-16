@@ -338,21 +338,31 @@ never fires on touch, so the phone has the menu only (no long-press drag).
   bottom centre for four seconds (`SauceUndoBar`, `undo-bar.js`): "Moved 'X'
   under 'Y'", "Moved 'X' to top level", "Moved 'X' to <project or trip>",
   "Moved note 'N' to 'Y'" or "Reordered subtasks of 'Y'". It pauses while
-  hovered or focused, a new move replaces it (the older move can no longer be
-  undone), and Cmd/Ctrl+Z undoes while it shows and focus is not in an editor
-  or a text field. On a phone it sits above the navbar and toolbar. A refused
-  or failed move shows no bar. Before the move the task's path and its
-  `parent_task`, `rank`, `sibling_rank`, `project`, `project_slug`, `trip`,
-  `trip_slug` and `due` are taken (`TaskDialog.moveSnapshot`; a note's path,
-  `task:` and title, `TaskDocs.moveSnapshot`; for a reorder every sibling's
-  `sibling_rank`). Undo, inside `RenderSafe.mutate`, puts the file or folder
-  back at its old path with `renameFile` (loops refused as for a move; a
-  taken path gets the reparent naming and "Restored, but renamed to 'Z'") and
-  writes those fields back, removing any that were absent
-  (`TaskDialog.moveBack`, `TaskDocs.moveBack`). The bar then reads "Undone"
-  for a second; a failure shows "Couldn't undo: <reason>". The To-Do view and
-  the task card repaint at once (`onUndone`); other surfaces on Dataview's
-  next render.
+  hovered with a mouse or focused (a tap does not pause it), a new move
+  replaces it (the older move can no longer be undone), and Cmd/Ctrl+Z undoes
+  while it shows and nothing has focus or the focus is in the bar. The shown
+  bar lives on `window.__sauceUndoBar`, so a CustomJS reload still closes it.
+  On a phone it sits above the navbar and toolbar. A refused, failed or no-op
+  move shows no bar, and the bar closes when anything else renames or
+  modifies the moved task (the move's own late events, in the first 800 ms,
+  are ignored). Before the move the task's path and its `parent_task`,
+  `rank`, `sibling_rank`, `project`, `project_slug`, `trip`, `trip_slug` and
+  `due` are taken (`TaskDialog.moveSnapshot`; a note's path, `task:` and
+  title, `TaskDocs.moveSnapshot`; for a reorder every sibling's
+  `sibling_rank`), and the move reports what it wrote (`wrote`). Undo, inside
+  `RenderSafe.mutate`, puts back only the keys the move wrote and only while
+  they still hold that value, then renames the file or folder back to its old
+  path with `renameFile` (fields first, as `reparent` does; a failed rename
+  puts the post-move fields back). It is refused when the task is no longer
+  where the move left it ("couldn't find the task"), its old parent or task
+  folder moved ("its old parent moved"; no folder is made where a task folder
+  was), its old project or trip note is gone, a note's old task is gone ("its
+  task moved"), or the old parent would make a loop. A taken old path gets
+  the reparent naming and "Restored, but renamed to 'Z'" (`TaskDialog.moveBack`,
+  `TaskDocs.moveBack`). The bar then reads "Undone" for a second; a failure
+  shows "Couldn't undo: <reason>". The To-Do view, the task card and the
+  daily dashboard panel repaint at once (`onUndone`); the project and trip
+  groups ask Dataview to redraw.
 
 ## API (`customJS.TaskEntity`)
 

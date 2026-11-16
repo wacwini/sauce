@@ -5,11 +5,15 @@ class SauceUndoBar {
     // button and a close ×. It pauses while hovered or focused, then fades
     // out. Only one bar shows at a time: a new one replaces it, and the
     // replaced move can no longer be undone. Cmd/Ctrl+Z triggers Undo while
-    // the bar shows and focus is not in an editor or a text field. On
-    // mobile it sits above the bottom navbar and the editing toolbar.
+    // the bar shows and nothing has focus (the page body) or the focus is in
+    // the bar itself. A mouse over the bar pauses it; a tap does not. On
+    // mobile it sits above the bottom navbar and the editing toolbar. The
+    // shown bar lives on window.__sauceUndoBar, so a class CustomJS reloaded
+    // can still close the bar, timer and key listener an older one left.
     //
-    // SauceUndoBar.show({ message, onUndo, duration = 4000 }) returns the
-    // bar's handle { el, undo(), close() }. onUndo() may resolve
+    // SauceUndoBar.show({ message, onUndo, onClose, duration = 4000 })
+    // returns the bar's handle { el, undo(), close() }; onClose() runs once
+    // when the bar goes, for any reason. onUndo() may resolve
     // { ok: false, reason } (or throw) when the undo failed: the bar then
     // shows "Couldn't undo: <reason>" as a Notice, unless the result says
     // `notified: true` (the writer already showed it). A successful undo
@@ -18,7 +22,6 @@ class SauceUndoBar {
     show(opts) { return SauceUndoBar.show(opts); }
     hide() { return SauceUndoBar.hide(); }
     current() { return SauceUndoBar.current(); }
-    isEditing(el) { return SauceUndoBar.isEditing(el); }
     isUndoKey(event) { return SauceUndoBar.isUndoKey(event); }
     get DURATION() { return SauceUndoBar.DURATION; }
 
@@ -72,20 +75,23 @@ class SauceUndoBar {
         try { if (el && el.classList) { if (on) el.classList.add(cls); else el.classList.remove(cls); } } catch (_e) {}
     }
 
-    /** True when `el` takes typing: a text field, a select, or anything inside an editor. */
-    static isEditing(el) {
-        if (!el) return false;
-        const tag = String(el.tagName || '').toUpperCase();
-        if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
-        if (tag === 'INPUT') {
-            const type = String(el.type || (typeof el.getAttribute === 'function' && el.getAttribute('type')) || 'text').toLowerCase();
-            return ['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file', 'image'].indexOf(type) < 0;
-        }
-        if (el.isContentEditable === true) return true;
-        try {
-            if (typeof el.closest === 'function' && el.closest('.cm-editor, [contenteditable=""], [contenteditable="true"]')) return true;
-        } catch (_e) {}
-        return false;
+    /** The bar that shows, kept on window so a reloaded class finds it. */
+    static get _state() {
+        const w = SauceUndoBar._win();
+        try { return (w && w.__sauceUndoBar) || SauceUndoBar.__state || null; } catch (_e) { return SauceUndoBar.__state || null; }
+    }
+
+    static set _state(s) {
+        SauceUndoBar.__state = s;
+        const w = SauceUndoBar._win();
+        try { if (w) w.__sauceUndoBar = s; } catch (_e) {}
+    }
+
+    /** True when Cmd/Ctrl+Z may reach the bar: nothing has focus, or the focus is in the bar. */
+    static _keyMayUndo(doc, el) {
+        const active = doc ? doc.activeElement : null;
+        if (!active || active === doc.body || active === doc.documentElement) return true;
+        try { return !!(el && typeof el.contains === 'function' && el.contains(active)); } catch (_e) { return false; }
     }
 
     /** True for Cmd+Z or Ctrl+Z with no Shift or Alt (Shift+Cmd+Z is redo). */
@@ -136,10 +142,12 @@ class SauceUndoBar {
         return s && s.phase !== 'closed' ? s.handle : null;
     }
 
-    /** Take the bar away at once (no fade). */
+    /** Take the bar away at once (no fade), even one an older copy of this class showed. */
     static hide() {
         const s = SauceUndoBar._state;
-        if (s) SauceUndoBar._close(s, false);
+        if (s && typeof s.dispose === 'function') { try { s.dispose(); } catch (_e) {} }
+        else if (s) SauceUndoBar._close(s, false);
+        SauceUndoBar._state = null;
         const doc = SauceUndoBar._doc();
         try {
             const stale = doc && typeof doc.querySelectorAll === 'function' ? doc.querySelectorAll('.sauce-undo-bar') : [];
@@ -185,16 +193,26 @@ class SauceUndoBar {
         const s = {
             el, msg, undoBtn, closeBtn, doc,
             onUndo: typeof o.onUndo === 'function' ? o.onUndo : null,
+            onClose: typeof o.onClose === 'function' ? o.onClose : null,
             phase: 'shown', remaining: duration, deadline: null, timer: null,
             hover: false, focus: false, keyHandler: null,
         };
         s.handle = { el, undo: () => SauceUndoBar._undo(s), close: () => SauceUndoBar._close(s, true) };
+        s.dispose = () => SauceUndoBar._close(s, false);
         SauceUndoBar._state = s;
 
         undoBtn.addEventListener('click', (ev) => { try { ev.stopPropagation(); } catch (_e) {} SauceUndoBar._undo(s); });
         closeBtn.addEventListener('click', (ev) => { try { ev.stopPropagation(); } catch (_e) {} SauceUndoBar._close(s, true); });
-        el.addEventListener('mouseenter', () => { s.hover = true; SauceUndoBar._pause(s); });
-        el.addEventListener('mouseleave', () => { s.hover = false; SauceUndoBar._resume(s); });
+        el.addEventListener('pointerenter', (ev) => {
+            if (!ev || ev.pointerType !== 'mouse') return;
+            s.hover = true;
+            SauceUndoBar._pause(s);
+        });
+        el.addEventListener('pointerleave', (ev) => {
+            if (!ev || ev.pointerType !== 'mouse') return;
+            s.hover = false;
+            SauceUndoBar._resume(s);
+        });
         el.addEventListener('focusin', () => { s.focus = true; SauceUndoBar._pause(s); });
         el.addEventListener('focusout', (ev) => {
             const to = ev && ev.relatedTarget;
@@ -203,8 +221,8 @@ class SauceUndoBar {
             SauceUndoBar._resume(s);
         });
         s.keyHandler = (ev) => {
-            if (s.phase !== 'shown' || !SauceUndoBar.isUndoKey(ev)) return;
-            if (SauceUndoBar.isEditing(doc.activeElement)) return;
+            if (s.phase !== 'shown' || !s.el.isConnected || !SauceUndoBar.isUndoKey(ev)) return;
+            if (!SauceUndoBar._keyMayUndo(doc, s.el)) return;
             try { ev.preventDefault(); ev.stopPropagation(); } catch (_e) {}
             SauceUndoBar._undo(s);
         };
@@ -269,6 +287,9 @@ class SauceUndoBar {
         s.timer = null;
         try { if (s.keyHandler) s.doc.removeEventListener('keydown', s.keyHandler, true); } catch (_e) {}
         if (SauceUndoBar._state === s) SauceUndoBar._state = null;
+        const onClose = s.onClose;
+        s.onClose = null;
+        try { if (onClose) onClose(); } catch (_e) {}
         const remove = () => { try { s.el.remove(); } catch (_e) {} };
         if (!fade) { remove(); return; }
         SauceUndoBar._setClass(s.el, 'is-leaving', true);

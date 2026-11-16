@@ -246,7 +246,8 @@ class TaskTodayList {
      *                                       (the task card's subtasks use 'sibling_rank')
      * Ranks apply optimistically (one repaint); a failed write restores that
      * task's prior rank and repaints once more. The lock is released in
-     * `finally`. Resolves { written, failed } or null when refused / unchanged.
+     * `finally`. Resolves { written, failed, wrote } (wrote: path -> the rank
+     * written) or null when refused / unchanged.
      */
     static async applyManualOrder(next, deps) {
         const d = deps || {};
@@ -270,6 +271,7 @@ class TaskTodayList {
             list.forEach((t, i) => { t[field] = i + 1; });
             repaint();
             const written = [];
+            const wrote = {};
             const failed = [];
             let silent = 0;
             for (const change of changes) {
@@ -277,7 +279,7 @@ class TaskTodayList {
                 try { res = await d.setFields(change.path, { [field]: change.rank }); } catch (_e) { res = null; }
                 let outcome = 'silent';
                 try { outcome = classify(res); } catch (_e) { outcome = 'silent'; }
-                if (outcome === 'ok') { written.push(change.path); continue; }
+                if (outcome === 'ok') { written.push(change.path); wrote[change.path] = change.rank; continue; }
                 failed.push(change.path);
                 if (outcome === 'silent') silent += 1;
                 const t = byPath.get(change.path);
@@ -287,7 +289,7 @@ class TaskTodayList {
             if (silent > 0 && typeof d.notice === 'function') {
                 try { d.notice('Could not save the new task order'); } catch (_e) {}
             }
-            return { written, failed };
+            return { written, failed, wrote };
         } finally {
             if (lockSet) lockSet.delete(lockKey);
         }

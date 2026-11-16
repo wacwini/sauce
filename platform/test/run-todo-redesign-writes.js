@@ -743,7 +743,7 @@ process.exitCode = 1;
       lock: { set: lockSet, key: 'k' },
     });
     eq(writes, [['b', 1], ['a', 2], ['c', 3]], 'only changed ranks, in order');
-    eq(res, { written: ['b', 'c'], failed: ['a'] });
+    eq(res, { written: ['b', 'c'], failed: ['a'], wrote: { b: 1, c: 3 } });
     eq(tasks.map((t) => t.rank), [1, 1, 3], 'failed task keeps its prior rank');
     assert(repaints === 2, 'optimistic repaint + one after failure: ' + repaints);
     eq(notices, ['Could not save the new task order']);

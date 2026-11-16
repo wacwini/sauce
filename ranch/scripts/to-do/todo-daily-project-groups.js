@@ -81,6 +81,8 @@ class ToDoDailyProjectGroups {
             && typeof TTL.wireRowDrag === 'function' && typeof TTL.wireGroupDrop === 'function';
         // No "Open Project Tasks" umbrella label on the daily (FIX 3) — each project
         // renders its own name/section label below, so the umbrella was redundant.
+        // After an undo the lists draw again at once (this block keeps no state).
+        const redraw = () => { try { window.app.commands.executeCommandById('dataview:dataview-force-refresh-views'); } catch (_e) { /* Dataview renders on its own */ } };
         for (const blk of blocks) {
             const anchor = document.createComment(` project-group-anchor-${blk.projSlug} `);
             dv.container.appendChild(anchor);
@@ -90,13 +92,13 @@ class ToDoDailyProjectGroups {
                 TTL.wireGroupDrop(dv.container.lastElementChild, {
                     label: `Move to ${blk.projName}`,
                     refuse: (p) => (blk.tasks.some((t) => t && t.path === p) ? `Already in ${blk.projName}` : ''),
-                    apply: (p) => TM.setProject(p, project),
+                    apply: (p) => TM.setProject(p, project, { onUndone: redraw }),
                 });
             }
             for (const t of blk.tasks) {
                 try {
-                    const row = TTL.renderTaskRow(dv.container, t, TD, canDrag ? { dragHandle: 'Drag onto a task or project' } : undefined);
-                    if (canDrag) TTL.wireRowDrag(row, t, {});
+                    const row = TTL.renderTaskRow(dv.container, t, TD, canDrag ? { dragHandle: 'Drag onto a task or project', onUndone: redraw } : { onUndone: redraw });
+                    if (canDrag) TTL.wireRowDrag(row, t, { onUndone: redraw });
                 } catch (_e) { /* one bad note */ }
             }
         }

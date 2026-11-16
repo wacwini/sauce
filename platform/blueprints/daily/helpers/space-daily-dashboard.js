@@ -1774,6 +1774,19 @@ class SpaceDailyDashboard {
         }
         rerender();
       };
+      // The Undo bar put a move back (TaskMove): the task takes its old path,
+      // parent, ranks, due, project and trip again and the panel redraws.
+      const onUndone = (task, res) => {
+        if (!res || res.ok !== true || !res.from || !res.task) return;
+        const keys = ["path", "parent_path", "parent_task", "rank", "sibling_rank", "due", "project", "project_slug", "trip", "trip_slug"];
+        for (const key of ["today", "overdue", "stale"]) {
+          for (const t of model[key]) {
+            if (!t || t.path !== res.from) continue;
+            for (const k of keys) if (Object.prototype.hasOwnProperty.call(res.task, k)) t[k] = res.task[k];
+          }
+        }
+        rerender();
+      };
       // A checkbox completion: the row leaves its section and, unless it is a
       // recurring task (which rolls its due date forward instead of reaching
       // _done/), shows up at the top of Done today.
@@ -1862,7 +1875,7 @@ class SpaceDailyDashboard {
         const list = s.createEl("div", { cls: "sauce-today-list" });
         return { s, head, tools, list };
       };
-      const rowOpts = (extra) => Object.assign({ viewedDay: todayStr, todayStr, onRescheduled, onDone, onMoved }, extra || {});
+      const rowOpts = (extra) => Object.assign({ viewedDay: todayStr, todayStr, onRescheduled, onDone, onMoved, onUndone }, extra || {});
 
       // 1. Up next — today's tasks (all sources), shared sort, optional group.
       // Any grouping (the To-Do view's rule) turns manual order off.
@@ -1912,6 +1925,7 @@ class SpaceDailyDashboard {
             reorder: manual ? reorder : null,
             canReorder: (from) => upNext.some((t) => t && t.path === from),
             onMoved: (res, from) => onMoved({ path: from }, res),
+            onUndone: (res) => onUndone(null, res),
           });
           return;
         }
@@ -1953,7 +1967,7 @@ class SpaceDailyDashboard {
       };
 
       if (canNest && typeof TTL.wireTopLevelStrip === "function") {
-        TTL.wireTopLevelStrip(up.s, { isMobile, before: up.list, onMoved: (res, from) => onMoved({ path: from }, res) });
+        TTL.wireTopLevelStrip(up.s, { isMobile, before: up.list, onMoved: (res, from) => onMoved({ path: from }, res), onUndone: (res) => onUndone(null, res) });
       }
       if (upNext.length === 0) {
         const hint = up.list.createEl("div", { cls: "sauce-today-empty" });

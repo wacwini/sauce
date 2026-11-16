@@ -7,8 +7,11 @@
  *   - four seconds, paused while hovered or focused, then a fade;
  *   - a new bar replaces the old one, whose move can no longer be undone;
  *   - Undo, "Undone" for a second, "Couldn't undo: <reason>" on failure;
- *   - Cmd/Ctrl+Z only while the bar shows and focus is not in an editor or
- *     a text field.
+ *   - Cmd/Ctrl+Z only while the bar shows and nothing has focus or the
+ *     focus is in the bar;
+ *   - the shown bar lives on window.__sauceUndoBar, so a reloaded class
+ *     closes the old bar, its timer and its key listener;
+ *   - a mouse pauses it, a tap does not.
  * A fake window with a manual clock drives the timers. Zero-dep; exit 0 iff
  * all pass.
  */
@@ -30,7 +33,7 @@ const load = () => new Function(SRC + '\nreturn SauceUndoBar;')();
 function makeEl(doc, tag) {
   const el = {
     tagName: String(tag).toUpperCase(), className: '', children: [], parentNode: null, attributes: {},
-    _text: '', _listeners: {}, disabled: false, type: '', isContentEditable: false, _closest: null,
+    _text: '', _listeners: {}, disabled: false, type: '',
     appendChild(c) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = this; this.children.push(c); return c; },
     removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; },
     remove() { if (this.parentNode) this.parentNode.removeChild(this); },
@@ -40,7 +43,7 @@ function makeEl(doc, tag) {
     addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); },
     removeEventListener(t, fn) { this._listeners[t] = (this._listeners[t] || []).filter((f) => f !== fn); },
     fire(t, ev) { let out; for (const fn of (this._listeners[t] || []).slice()) out = fn(Object.assign({ target: this, preventDefault() {}, stopPropagation() {} }, ev || {})); return out; },
-    closest(sel) { return this._closest && this._closest(sel) ? this : null; },
+    get isConnected() { for (let x = this; x; x = x.parentNode) if (x === doc.body) return true; return false; },
     get textContent() { return this._text + this.children.map((c) => c.textContent).join(''); },
     set textContent(v) { this._text = String(v == null ? '' : v); this.children = []; },
   };
@@ -162,15 +165,27 @@ const leaving = (bar) => bar.classList.contains('is-leaving');
       Bar.show({ message: 'm', duration: 4000 });
       const bar = bars(win)[0];
       win.advance(1000);
-      bar.fire('mouseenter');
+      bar.fire('pointerenter', { pointerType: 'mouse' });
       win.advance(60000);
       const heldWhileHovered = !leaving(bar);
-      bar.fire('mouseleave');
+      bar.fire('pointerleave', { pointerType: 'mouse' });
       win.advance(2999);
       const keepsTheRest = !leaving(bar);
       win.advance(1);
-      ok('UB-HOVER-PAUSE hovering holds the bar; leaving it resumes with the time that was left',
+      ok('UB-HOVER-PAUSE a mouse over the bar holds it; leaving resumes with the time that was left',
         heldWhileHovered && keepsTheRest && leaving(bar));
+    }
+    {
+      const win = makeWindow();
+      global.window = win;
+      const Bar = load();
+      Bar.show({ message: 'm' });
+      const bar = bars(win)[0];
+      win.advance(1000);
+      bar.fire('pointerenter', { pointerType: 'touch' });
+      bar.fire('pointerenter', { pointerType: 'pen' });
+      win.advance(3000);
+      ok('UB-TAP-NO-PAUSE a tap (touch or pen pointer) does not pause the bar', leaving(bar));
     }
     {
       const win = makeWindow();
@@ -290,27 +305,29 @@ const leaving = (bar) => bar.classList.contains('is-leaving');
       const shifted = await press({ key: 'z', metaKey: true, shiftKey: true });
       const plain = await press({ key: 'z' });
       const noRedo = n === 0 && !shifted.prevented && !plain.prevented;
-      const input = doc.createElement('input');
+      const elsewhere = doc.body.appendChild(doc.createElement('div'));
+      const input = elsewhere.appendChild(doc.createElement('input'));
       input.type = 'text';
-      const area = doc.createElement('textarea');
-      const editable = doc.createElement('div');
-      editable.isContentEditable = true;
-      const inEditor = doc.createElement('span');
-      inEditor._closest = (sel) => /\.cm-editor/.test(sel);
+      const box = elsewhere.appendChild(doc.createElement('input'));
+      box.type = 'checkbox';
+      const editor = elsewhere.appendChild(doc.createElement('div'));
       const results2 = [];
-      for (const el of [input, area, editable, inEditor]) {
+      for (const el of [input, box, editor, elsewhere]) {
         const e = await press({ key: 'z', metaKey: true }, el);
         results2.push(e.prevented);
       }
-      const editorsKeepIt = n === 0 && results2.every((p) => p === false);
-      const box = doc.createElement('input');
-      box.type = 'checkbox';
-      await press({ key: 'z', metaKey: true }, box);
-      const checkboxIsNoEditor = n === 1;
-      ok('UB-KEY Cmd+Z and Ctrl+Z undo while the bar shows; Shift+Cmd+Z and a bare Z do not',
+      const othersKeepIt = n === 0 && results2.every((p) => p === false);
+      await press({ key: 'z', metaKey: true }, parts(bars(win)[0]).undo);
+      const inBar = n === 1;
+      ok('UB-KEY Cmd+Z and Ctrl+Z undo while the bar shows and the page body has focus; Shift+Cmd+Z and a bare Z do not',
         cmdHit && ctrlHit && noRedo);
-      ok('UB-KEY-GATED Cmd+Z in a text field, a textarea, a contenteditable or the editor stays with the editor; a checkbox is no editor',
-        editorsKeepIt && checkboxIsNoEditor);
+      ok('UB-KEY-GATED with focus anywhere but the body or the bar (a text field, a checkbox, an editor) Cmd+Z is left alone; in the bar it undoes',
+        othersKeepIt && inBar, JSON.stringify({ n, results2 }));
+      fresh();
+      bars(win)[0].remove();
+      const detached = await press({ key: 'z', metaKey: true });
+      ok('UB-KEY-DETACHED a bar taken off the page no longer answers Cmd+Z', n === 0 && !detached.prevented);
+      Bar.hide();
       fresh();
       win.advance(4180);
       const gone = await press({ key: 'z', metaKey: true });
@@ -327,8 +344,43 @@ const leaving = (bar) => bar.classList.contains('is-leaving');
         && fs.existsSync(mirror) && fs.readFileSync(mirror, 'utf8') === SRC);
       const Inst = load();
       const inst = new Inst();
-      ok('UB-INSTANCE the stored instance delegates show / hide / current / isEditing / isUndoKey',
-        ['show', 'hide', 'current', 'isEditing', 'isUndoKey'].every((k) => typeof inst[k] === 'function') && inst.DURATION === 4000);
+      ok('UB-INSTANCE the stored instance delegates show / hide / current / isUndoKey',
+        ['show', 'hide', 'current', 'isUndoKey'].every((k) => typeof inst[k] === 'function') && inst.DURATION === 4000);
+    }
+
+    // ----- across a CustomJS reload, and onClose -----
+    {
+      const win = makeWindow();
+      global.window = win;
+      const OldBar = load();
+      let oldCloses = 0;
+      let oldUndos = 0;
+      OldBar.show({ message: 'old', onUndo: async () => { oldUndos += 1; return { ok: true }; }, onClose: () => { oldCloses += 1; } });
+      const onWindow = !!win.__sauceUndoBar && win.__sauceUndoBar.el === bars(win)[0];
+      const NewBar = load();
+      let newUndos = 0;
+      NewBar.show({ message: 'new', onUndo: async () => { newUndos += 1; return { ok: true }; } });
+      const listeners = (win.document._listeners.keydown || []).length;
+      win.document.key({ key: 'z', metaKey: true });
+      await flush();
+      win.advance(10000);
+      ok('UB-RELOAD a reloaded class closes the bar an older copy showed: one bar, one key listener, the old timer gone, the old onClose run once',
+        onWindow && listeners === 1 && oldUndos === 0 && newUndos === 1 && oldCloses === 1
+        && bars(win).length === 0 && win.__sauceUndoBar === null, JSON.stringify({ onWindow, listeners, oldUndos, newUndos, oldCloses }));
+    }
+    {
+      const win = makeWindow();
+      global.window = win;
+      const Bar = load();
+      const closes = [];
+      Bar.show({ message: 'a', onClose: () => closes.push('timer') });
+      win.advance(4000);
+      Bar.show({ message: 'b', onClose: () => closes.push('replaced') });
+      Bar.show({ message: 'c', onClose: () => closes.push('closed') });
+      Bar.current().close();
+      Bar.current();
+      ok('UB-ONCLOSE onClose runs once whichever way the bar goes: its timer, a newer bar, or close()',
+        JSON.stringify(closes) === JSON.stringify(['timer', 'replaced', 'closed']), JSON.stringify(closes));
     }
   } catch (e) {
     console.log('  FAIL — harness threw: ' + (e && (e.stack || e.message || e)));
