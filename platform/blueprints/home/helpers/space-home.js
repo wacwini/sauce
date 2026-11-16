@@ -7,9 +7,9 @@
  *   2. a quick-add "+"     — a dropdown whose first entry, "New task", opens
  *                            the full task dialog, followed by Meeting, Sticky
  *                            Note, Article, Journal, Trip,
- *   2b. NOW + PLAN THE DAY — customJS.TaskDayPlan's pinned Now card and open
- *                            Plan the day panel, as their own top-level node
- *                            (absent until TaskDayPlan loads),
+ *   2b. PLAN THE DAY       — customJS.TaskDayPlan's open Plan the day panel,
+ *                            with the pinned Now card inside it, as its own
+ *                            top-level node (absent until TaskDayPlan loads),
  *   3. the DAILY DASHBOARD — the exact SpaceDailyDashboard renderer, injected with
  *                            `asOf: today` so it always shows THIS calendar day's
  *                            agenda (the DRY seam; no params ⇒ dashboard's own note
@@ -378,9 +378,9 @@ class SpaceHome {
       }
     } catch (_e) { /* cold load / bad dv → zeros; never abort render */ }
 
-    // Day rhythm (task-entity TaskDayPlan): the pinned Now card and an open
-    // Plan the day panel, drawn as their own top-level node between the head
-    // and the dashboard (which is told not to draw them again). Built here so
+    // Day rhythm (task-entity TaskDayPlan): an open Plan the day panel, with
+    // the pinned Now card inside it, drawn as its own top-level node between the head
+    // and the dashboard (which is told not to draw it again). Built here so
     // its signature joins the no-op check below. Absent until TaskDayPlan loads.
     const DP = cjs && cjs.TaskDayPlan;
     let dayModel = null;
@@ -665,7 +665,7 @@ class SpaceHome {
       mi.onclick = () => { SpaceHome._dispatch(item.key, dv, today); setMenu(false); };
     }
 
-    // 2) Now + Plan the day ─────────────────────────────────────────────────────
+    // 2) Plan the day (the Now card sits inside it) ─────────────────────────────
     // Right after the head, so a rebuilt head never lands below it.
     if (dayModel) {
       try {

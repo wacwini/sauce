@@ -26,6 +26,7 @@ const TTL_SRC = fs.readFileSync(path.join(WORKSHOP, 'platform/mechanisms/task-en
 const TE_SRC = fs.readFileSync(path.join(WORKSHOP, 'platform/mechanisms/task-entity/task-entity.js'), 'utf8');
 const TD_SRC = fs.readFileSync(path.join(WORKSHOP, 'platform/mechanisms/task-entity/task-dialog.js'), 'utf8');
 const RS_SRC = fs.readFileSync(path.join(WORKSHOP, 'platform/mechanisms/render-safe/render-safe.js'), 'utf8');
+const DP_SRC = fs.readFileSync(path.join(WORKSHOP, 'platform/mechanisms/task-entity/task-day-plan.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.log('  FAIL ' + msg); } }
@@ -1160,6 +1161,15 @@ process.exitCode = 1;
       },
       workspace: { openLinkText(p) { calls.opened.push(p); }, getLeavesOfType() { return []; } },
     };
+    if (o.cacheTasks) {
+      const cached = [...(o.taskPages || []), ...(o.donePages || [])].map((pg) => {
+        const fm = Object.assign({}, pg);
+        delete fm.file;
+        return { path: pg.file.path, basename: pg.file.path.split('/').pop().replace(/\.md$/, ''), stat: { mtime: 0 }, fm };
+      });
+      app.vault.getMarkdownFiles = () => cached;
+      app.metadataCache = { getFileCache: (f) => (f && f.fm ? { frontmatter: f.fm } : null) };
+    }
     const windowShim = {
       moment: (d) => ({ format: (fmt) => {
         const day = d == null ? P_TODAY : String(d).slice(0, 10);
@@ -1195,6 +1205,7 @@ process.exitCode = 1;
     global.app = app;
     global.customJS = customJS;
     const pagesByQuery = { '"spice/tasks"': (o.taskPages || []).concat(o.donePages || []) };
+    if (o.meetingPages) pagesByQuery['"spice/meetings/notes"'] = o.meetingPages;
     const root = makeRichEl('div');
     const dv = {
       container: root,
@@ -1203,6 +1214,7 @@ process.exitCode = 1;
         const items = (pagesByQuery[q] || []).slice();
         items.array = () => items.slice();
         items.where = (fn) => items.filter(fn);
+        if (o.meetingPages && q === '"spice/meetings/notes"') items.where = (fn) => { const w = items.filter(fn); w.sort = () => ({ array: () => w.slice() }); return w; };
         items.sort = () => items;
         return items;
       },
@@ -1377,6 +1389,56 @@ process.exitCode = 1;
     try { assert(calls.length === 2, 'asOf today without dayPlan: false draws it'); } finally { homeDefault.cleanup(); }
     const cold = await renderLivePanel({ taskPages: sectionPages, donePages: sectionDone });
     try { assert(cold.root.querySelector('.space-daily-dashboard'), 'without TaskDayPlan the dashboard still draws'); } finally { cold.cleanup(); }
+  });
+
+  await ok('RD-DAYPLAN-REAL the real day plan on today\'s daily note: count chips, no task rows, the Now card once inside, Waiting, Meetings; Shut down still lists the tasks', async () => {
+    const DPClass = new Function(`${DP_SRC}; return TaskDayPlan;`)();
+    const pinned = sectionPages.map((p) => (p.title === 'Today alpha' ? Object.assign({}, p, { pinned_at: P_TODAY + 'T08:00:00-06:00' }) : p));
+    const modals = [];
+    const extra = (waiting) => ({
+      TaskDayPlan: new DPClass(),
+      TaskDocs: { waiting: () => (waiting ? [{ path: 'spice/tasks/late-3/notes/Ask.md', title: 'Ask Jason', to: 'Jason', days: 2 }] : []), waitingText: (d) => 'Waiting ' + d + 'd' },
+      SauceModal: { open: (spec) => { modals.push(spec); return { close() {} }; } },
+    });
+    const chipsOf = (panel) => panel.querySelectorAll('.sauce-dp-count').map((c) => c.textContent).join('|');
+    const isTaskPath = (p) => /^spice\/tasks\//.test(p || '') && !/\/notes\//.test(p || '');
+    const priorDocument = global.document;
+    const full = await renderLivePanel({ cacheTasks: true, taskPages: pinned, donePages: sectionDone, extraCJS: extra(true),
+      meetingPages: [{ file: { path: 'spice/meetings/notes/Standup-' + P_TODAY + '.md', name: 'Standup-' + P_TODAY } }] });
+    try {
+      const dash = full.root.querySelector('.space-daily-dashboard');
+      const panel = dash._children[0];
+      assert(panel && /sauce-dp-plan/.test(panel.className) && panel.open === false, 'the collapsed panel leads the dashboard');
+      assert(chipsOf(panel) === '3 overdue|2 due today|1 waiting|1 meeting', 'chips: ' + chipsOf(panel));
+      const rows = panel.querySelectorAll('.sauce-dp-row');
+      assert(!rows.some((r) => isTaskPath(r.getAttribute('data-path'))), 'no task rows: ' + rows.map((r) => r.getAttribute('data-path')).join('|'));
+      assert(!panel.querySelectorAll('.sauce-dp-group').some((g) => /^(now|overdue|today)$/.test(g.getAttribute('data-group') || '')), 'no Now, Overdue or Due today list');
+      assert(!/Late seven|Today project/.test(panel.textContent), 'no task titles in the panel');
+      const body = panel.querySelector('.sauce-dp-plan-body');
+      const parts = body._children.map((c) => (/sauce-dp-now/.test(c.className) ? 'now' : c.getAttribute('data-group') || c.className));
+      assert(parts.join('|') === 'now|waiting|meetings', 'body: ' + parts.join('|'));
+      const cards = full.root.querySelectorAll('.sauce-dp-now');
+      assert(cards.length === 1 && cards[0].parentNode === body, 'the Now card is drawn once, inside the panel');
+      assert(rows.map((r) => r.getAttribute('data-path')).join('|') === 'spice/tasks/late-3/notes/Ask.md|spice/meetings/notes/Standup-' + P_TODAY + '.md',
+        'Waiting and Meetings rows: ' + rows.map((r) => r.getAttribute('data-path')).join('|'));
+      global.document = { body: {} };
+      await panel.querySelector('.sauce-dp-shutdown')._fire('click');
+      const mb = makeRichEl('div');
+      assert(modals.length === 1, 'Shut down opens its modal');
+      modals[0].body(mb);
+      const still = mb.querySelectorAll('.sauce-dp-sd-row').map((r) => r.getAttribute('data-path'));
+      assert(still.join('|') === 'spice/tasks/stale-40.md|spice/tasks/late-7.md|spice/tasks/late-3.md|spice/tasks/today-a.md|spice/tasks/today-proj.md',
+        'Shut down lists every overdue and due-today task: ' + still.join('|'));
+    } finally { global.document = priorDocument; full.cleanup(); }
+
+    const bare = await renderLivePanel({ cacheTasks: true, taskPages: sectionPages, donePages: sectionDone, extraCJS: extra(false) });
+    try {
+      const panel = bare.root.querySelector('.sauce-dp-plan');
+      assert(chipsOf(panel) === '3 overdue|2 due today', 'waiting and meetings chips hide at 0: ' + chipsOf(panel));
+      const body = panel.querySelector('.sauce-dp-plan-body');
+      assert(body._children.length === 1 && body.textContent === 'Nothing pinned, waiting or scheduled. Your tasks are below.', 'empty line: ' + body.textContent);
+      assert(panel.querySelectorAll('.sauce-dp-row').length === 0 && !bare.root.querySelector('.sauce-dp-now'), 'no rows, no Now card');
+    } finally { bare.cleanup(); }
   });
 
   await ok('RD-P-SECTIONS labels, counts, order and per-section sorting', async () => {

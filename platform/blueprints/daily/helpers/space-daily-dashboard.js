@@ -795,8 +795,8 @@ class SpaceDailyDashboard {
       overflow-x: hidden;
     `;
 
-    // Day rhythm (task-entity TaskDayPlan): on today's daily note only, the
-    // pinned Now card and a collapsed Plan the day panel lead the dashboard.
+    // Day rhythm (task-entity TaskDayPlan): on today's daily note only, a
+    // collapsed Plan the day panel (the pinned Now card inside it) leads the dashboard.
     // Home draws its own (open) and passes dayPlan: false.
     try {
       const DP = liveCjs && liveCjs.TaskDayPlan;

@@ -83,6 +83,8 @@ Moving tasks around also means opening the edit dialog. Each feature below close
   - Waiting (feature 1), with how long each has waited.
 
   Each entry is clickable, and the counts sit in the panel head.
+
+  > **2026-11-16:** the Overdue and Due today task lists were removed from the panel, on Home and on the daily note, because they duplicated the Tasks list right below it. The head keeps the counts as chips (`N overdue` hidden at 0, `N due today`, `N waiting` hidden at 0, `N meeting(s)` hidden at 0). The body keeps only the Now card (drawn once, inside the panel), Waiting and Meetings, and shows "Nothing pinned, waiting or scheduled. Your tasks are below." when none of them exist. Shut down is unchanged and still lists overdue and due-today tasks.
 - **Shut down** (a button on that panel, and a command `Sauce: Shut down the day`). It opens a modal with:
   - **Done today:** a read-only list.
   - **Still open:** overdue tasks and tasks due today, each with Tomorrow, Next work day, Pick date, Done and Leave.

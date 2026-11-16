@@ -8,8 +8,11 @@ class TaskDayPlan {
     //   Pinning sets it on one task and clears it on every other task that
     //   has it; unpinning clears it.
     // - Plan the day. A panel on Home (open) and at the top of today's daily
-    //   note (collapsed): Now, Overdue, Due today, today's meetings and the
-    //   Waiting comms notes, each row clickable, the counts in the head.
+    //   note (collapsed). The head counts overdue, due today, waiting and
+    //   meetings; the body holds only what the Tasks list below does not
+    //   show: the Now card, the Waiting comms notes and today's meetings,
+    //   each row clickable. It lists no tasks (removed 2026-11-16: the
+    //   Overdue and Due today lists repeated the Tasks list).
     // - Shut down. A modal from the panel and the `Sauce: Shut down the day`
     //   command (TaskDayPlanInit): Done today (read only) and Still open
     //   (overdue and due today), each with Tomorrow, Next work day, Pick date,
@@ -53,6 +56,8 @@ class TaskDayPlan {
     renderPinButton(host, opts) { return TaskDayPlan.renderPinButton(host, opts); }
     renderNow(host, opts) { return TaskDayPlan.renderNow(host, opts); }
     renderPlan(host, opts) { return TaskDayPlan.renderPlan(host, opts); }
+    countChips(counts) { return TaskDayPlan.countChips(counts); }
+    get EMPTY_TEXT() { return TaskDayPlan.EMPTY_TEXT; }
     renderDay(host, opts) { return TaskDayPlan.renderDay(host, opts); }
     openShutdown(opts) { return TaskDayPlan.openShutdown(opts); }
     finishShutdown(ctx) { return TaskDayPlan.finishShutdown(ctx); }
@@ -266,15 +271,19 @@ class TaskDayPlan {
         };
     }
 
-    /** A string that changes whenever what the day panel shows changes. */
+    /**
+     * A string that changes whenever what the day panel shows changes. The
+     * panel shows only the overdue and due-today counts, not those tasks.
+     */
     static signature(model) {
         if (!model) return '';
         const m = model;
         const paths = (list) => (Array.isArray(list) ? list : []).map((x) => (x && x.path) || '').join(',');
+        const k = m.counts || {};
         return JSON.stringify([
             m.today || '',
             m.now ? [m.now.path, String(m.now.pinned_at || ''), TaskDayPlan._day(m.now.due), m.now.title || ''] : null,
-            paths(m.overdue), paths(m.dueToday), paths(m.meetings),
+            k.overdue || 0, k.today || 0, paths(m.meetings),
             (Array.isArray(m.waiting) ? m.waiting : []).map((w) => (w && w.path) + ':' + (w && w.days)).join(','),
             m.progress ? [m.progress.done, m.progress.total] : null,
         ]);
@@ -902,10 +911,31 @@ class TaskDayPlan {
 
     static _plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
+    /** The message the panel body shows when it has no Now card, Waiting or meetings. */
+    static get EMPTY_TEXT() { return 'Nothing pinned, waiting or scheduled. Your tasks are below.'; }
+
+    /**
+     * The count chips for the panel head, in order: overdue (left out at 0),
+     * due today (always), waiting and meetings (each left out at 0), as
+     * [{ key, cls, text }].
+     */
+    static countChips(counts) {
+        const k = counts || {};
+        const n = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+        const out = [];
+        if (n(k.overdue)) out.push({ key: 'overdue', cls: 'is-overdue', text: n(k.overdue) + ' overdue' });
+        out.push({ key: 'today', cls: 'is-today' + (n(k.today) ? '' : ' is-zero'), text: n(k.today) + ' due today' });
+        if (n(k.waiting)) out.push({ key: 'waiting', cls: 'is-waiting', text: n(k.waiting) + ' waiting' });
+        if (n(k.meetings)) out.push({ key: 'meetings', cls: 'is-meetings', text: TaskDayPlan._plural(n(k.meetings), 'meeting', 'meetings') });
+        return out;
+    }
+
     /**
      * The Plan the day panel: a <details> whose head holds the title, the
-     * counts and Shut down. opts: { app, model, today, surface, open }.
-     * The panel stays as the person left it for the rest of the session.
+     * counts and Shut down, and whose body holds the Now card, Waiting and
+     * today's meetings. It lists no tasks: the Tasks list below does.
+     * opts: { app, model, today, surface, open }. The panel stays as the
+     * person left it for the rest of the session.
      */
     static renderPlan(host, opts) {
         try {
@@ -927,12 +957,10 @@ class TaskDayPlan {
             icon.innerHTML = TaskDayPlan.ICON.sun;
             head.createEl('span', { cls: 'sauce-dp-plan-title', text: 'Plan the day' });
             const counts = head.createEl('span', { cls: 'sauce-dp-counts' });
-            const k = model.counts || {};
-            const pill = (n, cls, text) => { if (n > 0) counts.createEl('span', { cls: 'sauce-dp-count ' + cls, text }); };
-            pill(k.overdue || 0, 'is-overdue', (k.overdue || 0) + ' overdue');
-            pill(k.today || 0, 'is-today', (k.today || 0) + ' today');
-            pill(k.meetings || 0, 'is-meetings', TaskDayPlan._plural(k.meetings || 0, 'meeting', 'meetings'));
-            pill(k.waiting || 0, 'is-waiting', (k.waiting || 0) + ' waiting');
+            for (const chip of TaskDayPlan.countChips(model.counts)) {
+                const c = counts.createEl('span', { cls: 'sauce-dp-count ' + chip.cls, text: chip.text });
+                try { c.setAttribute('data-count', chip.key); } catch (_e) {}
+            }
             const sd = head.createEl('button', { cls: 'sauce-dp-btn sauce-dp-shutdown' });
             try { sd.setAttribute('type', 'button'); } catch (_e) {}
             sd.innerHTML = TaskDayPlan.ICON.moon;
@@ -959,31 +987,19 @@ class TaskDayPlan {
                     row.addEventListener('keydown', (ev) => { if (ev && (ev.key === 'Enter' || ev.key === ' ')) { try { ev.preventDefault(); } catch (_e) {} TaskDayPlan._open(app, item.path, ev); } });
                 }
             };
-            const taskRow = (row, t, meta, tone) => {
-                row.createEl('span', { cls: 'sauce-dp-row-title', text: TaskDayPlan._str(t.title) || TaskDayPlan._base(t.path) });
-                if (meta) row.createEl('span', { cls: 'sauce-dp-row-meta' + (tone ? ' is-' + tone : ''), text: meta });
-            };
-            const late = (t) => {
-                const a = TaskDayPlan._dayNumber(TaskDayPlan._day(t.due));
-                const b = TaskDayPlan._dayNumber(today);
-                return a == null || b == null ? '' : (b - a) + 'd late';
-            };
-            if (model.now) group('now', 'Now', [model.now], (row, t) => { const chip = TaskDayPlan._dueChip(t.due, today); taskRow(row, t, chip ? chip.text : '', chip ? chip.tone : ''); });
-            group('overdue', 'Overdue', model.overdue || [], (row, t) => taskRow(row, t, late(t), 'danger'));
-            group('today', 'Due today', model.dueToday || [], (row, t) => taskRow(row, t, TaskDayPlan._str(t.priority) && !/^(none|normal)$/i.test(TaskDayPlan._str(t.priority)) ? TaskDayPlan._str(t.priority) : '', ''));
-            group('meetings', 'Meetings', model.meetings || [], (row, m) => {
-                if (m.time) row.createEl('span', { cls: 'sauce-dp-row-time', text: m.time });
-                row.createEl('span', { cls: 'sauce-dp-row-title', text: m.title || TaskDayPlan._base(m.path) });
-            });
+            if (model.now) TaskDayPlan.renderNow(body, { app, model, today });
             group('waiting', 'Waiting', model.waiting || [], (row, w) => {
                 row.createEl('span', { cls: 'sauce-dp-row-title', text: w.title || TaskDayPlan._base(w.path) });
                 const who = [w.to ? 'to ' + w.to : '', w.via || ''].filter(Boolean).join(' · ');
                 const meta = [TaskDayPlan._waitingText(w.days), who, w.taskTitle || ''].filter(Boolean).join(' · ');
                 row.createEl('span', { cls: 'sauce-dp-row-meta is-waiting', text: meta });
             });
-            const empty = !model.now && !(model.overdue || []).length && !(model.dueToday || []).length
-                && !(model.meetings || []).length && !(model.waiting || []).length;
-            if (empty) body.createEl('div', { cls: 'sauce-dp-empty', text: 'Nothing due, nothing waiting. A clear day.' });
+            group('meetings', 'Meetings', model.meetings || [], (row, m) => {
+                if (m.time) row.createEl('span', { cls: 'sauce-dp-row-time', text: m.time });
+                row.createEl('span', { cls: 'sauce-dp-row-title', text: m.title || TaskDayPlan._base(m.path) });
+            });
+            const empty = !model.now && !(model.meetings || []).length && !(model.waiting || []).length;
+            if (empty) body.createEl('div', { cls: 'sauce-dp-empty', text: TaskDayPlan.EMPTY_TEXT });
             return panel;
         } catch (_e) {
             return null;
@@ -991,9 +1007,10 @@ class TaskDayPlan {
     }
 
     /**
-     * The Now card (when a task is pinned) and the Plan the day panel into
-     * `host`. opts: { app, today, model (else built), dv, meetingPages,
-     * surface: 'home' | 'daily', open }. Returns the model, or null.
+     * The Plan the day panel, with the Now card inside it (drawn once, never
+     * above it as well), into `host`. opts: { app, today, model (else
+     * built), dv, meetingPages, surface: 'home' | 'daily', open }. Returns
+     * the model, or null.
      */
     static renderDay(host, opts) {
         try {
@@ -1002,7 +1019,6 @@ class TaskDayPlan {
             TaskDayPlan._injectCss();
             const model = o.model || TaskDayPlan.build(o);
             const today = String(o.today || model.today || '');
-            TaskDayPlan.renderNow(host, { app: o.app, model, today });
             TaskDayPlan.renderPlan(host, { app: o.app, model, today, surface: o.surface, open: o.open });
             return model;
         } catch (_e) {
@@ -1290,7 +1306,7 @@ class TaskDayPlan {
     static get _CSS() {
         return [
             '.sauce-day-plan { display: flex; flex-direction: column; gap: 10px; margin: 0 0 12px; }',
-            '.space-daily-dashboard > .sauce-dp-now, .space-daily-dashboard > .sauce-dp-plan { margin-bottom: 12px; }',
+            '.space-daily-dashboard > .sauce-dp-plan { margin-bottom: 12px; }',
             '.sauce-dp-now { --dp-accent: var(--interactive-accent); display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--dp-accent) 40%, var(--background-modifier-border)); border-radius: var(--radius-l, 12px); background: linear-gradient(135deg, color-mix(in srgb, var(--dp-accent) 12%, var(--background-secondary)) 0%, var(--background-secondary) 65%); }',
             '.sauce-dp-now.is-leaving { opacity: 0.5; }',
             '.sauce-dp-now-top { display: flex; align-items: center; gap: 8px; }',
@@ -1318,6 +1334,7 @@ class TaskDayPlan {
             '.sauce-dp-count { padding: 0 8px; border-radius: 999px; font-size: 0.74em; font-weight: 600; line-height: 1.7; white-space: nowrap; background: var(--background-modifier-hover); color: var(--text-muted); }',
             '.sauce-dp-count.is-overdue { color: var(--color-red, #dc2626); background: color-mix(in srgb, var(--color-red, #dc2626) 12%, transparent); }',
             '.sauce-dp-count.is-today { color: var(--color-orange, #ea580c); background: color-mix(in srgb, var(--color-orange, #ea580c) 12%, transparent); }',
+            '.sauce-dp-count.is-today.is-zero { color: var(--text-muted); background: var(--background-modifier-hover); }',
             '.sauce-dp-count.is-meetings { color: var(--color-blue, #2563eb); background: color-mix(in srgb, var(--color-blue, #2563eb) 12%, transparent); }',
             '.sauce-dp-count.is-waiting { color: var(--color-pink, #db2777); background: color-mix(in srgb, var(--color-pink, #db2777) 12%, transparent); }',
             'body .sauce-dp-btn.sauce-dp-shutdown { margin-left: auto; }',

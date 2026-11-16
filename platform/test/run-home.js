@@ -21,6 +21,9 @@
  *                 on TripNavButtons existing)
  *   HOME-PLUS / HOME-NEWTASK / HOME-NO-JOT — the "+" dropdown, its leading
  *                 New task item (full TaskDialog), and the removed inline jot input
+ *   HOME-PLAN / HOME-PLAN-REAL — the Plan the day node (stubbed, then the real
+ *                 TaskDayPlan): count chips, no task rows, the Now card once and
+ *                 inside the panel, Waiting, Meetings, the empty line, Shut down
  *
  * Usage: node platform/test/run-home.js   (exit 0 = all pass, 1 = any fail)
  */
@@ -43,7 +46,7 @@ function makeEl(tag, opts) {
   const el = {
     tag,
     cls: (opts && opts.cls) || "",
-    text: "",
+    text: opts && opts.text != null ? String(opts.text) : "",
     children: [],
     style: { cssText: "" },
     innerHTML: "",
@@ -406,8 +409,8 @@ function descendants(el) {
     global.window.customJS = undefined;
   }
 
-  // ── HOME-PLAN: Now + Plan the day (TaskDayPlan) as their own node between the
-  // head and the dashboard, open, and the dashboard told not to draw them.
+  // ── HOME-PLAN: Plan the day (TaskDayPlan) as its own node between the head
+  // and the dashboard, open, and the dashboard told not to draw it.
   installMoment("2026-07-02", 6);
   {
     const dv = makeDv();
@@ -418,7 +421,7 @@ function descendants(el) {
       TaskDayPlan: {
         build: (o) => { calls.push(["build", o]); return model; },
         signature: () => "sig-1",
-        renderDay: (host, o) => { calls.push(["render", o]); host.createEl("div", { cls: "sauce-dp-now" }); return model; },
+        renderDay: (host, o) => { calls.push(["render", o]); host.createEl("details", { cls: "sauce-dp-plan" }); return model; },
       },
     };
     global.window.customJS = global.customJS;
@@ -443,6 +446,103 @@ function descendants(el) {
       !dv2.container.children.some((k) => k.cls === "sauce-day-plan"));
     delete global.customJS;
     global.window.customJS = undefined;
+  }
+
+  // ── HOME-PLAN-REAL: the real TaskDayPlan on Home. The head counts the tasks
+  // (overdue, due today, waiting, meetings), the body lists none of them: the
+  // Now card once and inside the panel, Waiting, Meetings, else one empty line.
+  // Shut down still lists the overdue and due-today tasks.
+  installMoment("2026-07-02", 6);
+  {
+    const read = (p) => fs.readFileSync(path.join(WORKSHOP, p), "utf8");
+    const TaskEntity = new Function(`${read("platform/mechanisms/task-entity/task-entity.js")}\nreturn TaskEntity;`)();
+    const TaskDayPlan = new Function(`${read("platform/mechanisms/task-entity/task-day-plan.js")}\nreturn TaskDayPlan;`)();
+    const hasC = (n, cls) => (n.cls || "").split(/\s+/).indexOf(cls) >= 0;
+    const textOf = (n) => (n.text || "") + n.children.map(textOf).join("");
+    const draw = async (o) => {
+      const files = [];
+      const add = (p, fm) => files.push({ path: p, basename: p.split("/").pop().replace(/\.md$/, ""), stat: { mtime: 0 }, fm: Object.assign({ type: "task", status: "open" }, fm) });
+      for (let i = 1; i <= 32; i++) add(`spice/tasks/Due ${i}/Due ${i}.md`, Object.assign({ title: `Due ${i}`, due: "2026-07-02" }, o.pin && i === 1 ? { pinned_at: "2026-07-02T08:00:00-06:00" } : {}));
+      add("spice/tasks/Late/Late.md", { title: "Late one", due: "2026-06-30" });
+      const prevApp = global.window.app;
+      global.window.app = {
+        vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (p) => files.find((f) => f.path === p) || null },
+        metadataCache: { getFileCache: (f) => ({ frontmatter: f.fm }) },
+        workspace: { openLinkText() {} },
+      };
+      const modals = [];
+      global.customJS = {
+        SpaceDailyDashboard: {
+          computeCounts: () => ({ today: 32, overdue: 1, done: 0, meetings: 0 }),
+          selectMeetings: () => (o.meeting ? [{ file: { path: "spice/meetings/notes/Standup-2026-07-02.md", name: "Standup-2026-07-02" } }] : []),
+        },
+        TaskEntity: new TaskEntity(),
+        TaskDayPlan: new TaskDayPlan(),
+        TaskDocs: { waiting: () => (o.waiting ? [{ path: "spice/tasks/Late/notes/Ask Jason.md", title: "Ask Jason", to: "Jason", days: 3 }] : []), waitingText: (d) => "Waiting " + d + "d" },
+        SauceModal: { open: (spec) => { modals.push(spec); return { close() {} }; } },
+      };
+      global.window.customJS = global.customJS;
+      const dv = makeDv();
+      await home_.render(dv, {});
+      const day = dv.container.children.find((k) => k.cls === "sauce-day-plan") || null;
+      const all = day ? descendants(day) : [];
+      const panel = all.find((n) => hasC(n, "sauce-dp-plan")) || null;
+      const pd = panel ? descendants(panel) : [];
+      const head = pd.find((n) => hasC(n, "sauce-dp-plan-head")) || null;
+      const body = pd.find((n) => hasC(n, "sauce-dp-plan-body")) || null;
+      const chips = head ? descendants(head).filter((n) => hasC(n, "sauce-dp-count")).map(textOf).join("|") : "";
+      const taskPaths = new Set(files.map((f) => f.path));
+      const rows = pd.filter((n) => hasC(n, "sauce-dp-row"));
+      const shutdown = () => {
+        const btn = head ? descendants(head).find((n) => hasC(n, "sauce-dp-shutdown")) : null;
+        if (btn) btn._listeners.click[0]({ preventDefault() {}, stopPropagation() {} });
+        const mb = makeEl("div");
+        if (modals[0]) modals[0].body(mb);
+        return descendants(mb).filter((n) => hasC(n, "sauce-dp-sd-row")).map((n) => n["data-path"]);
+      };
+      const out = {
+        dv, day, all, panel, head, body, chips, rows, shutdown,
+        taskRows: rows.filter((r) => taskPaths.has(r["data-path"])),
+        nowCards: descendants(dv.container).filter((n) => hasC(n, "sauce-dp-now")),
+        bodyParts: body ? body.children.map((c) => (hasC(c, "sauce-dp-now") ? "now" : c["data-group"] || c.cls)) : [],
+        cleanup() {
+          if (prevApp === undefined) delete global.window.app; else global.window.app = prevApp;
+          delete global.customJS;
+          global.window.customJS = undefined;
+        },
+      };
+      return out;
+    };
+
+    const full = await draw({ pin: true, waiting: true, meeting: true });
+    try {
+      assertTrue("HOME-PLAN-REAL-1 the head counts 1 overdue, 32 due today, 1 waiting and 1 meeting, in that order",
+        full.chips === "1 overdue|32 due today|1 waiting|1 meeting", full.chips);
+      assertTrue("HOME-PLAN-REAL-2 the panel lists none of the 33 tasks: no task rows, no Overdue or Due today list",
+        !!full.panel && full.taskRows.length === 0
+        && !full.all.some((n) => /^(overdue|today|now)$/.test(n["data-group"] || ""))
+        && !/Due 2\b|Late one/.test(textOf(full.panel)),
+        JSON.stringify(full.rows.map((r) => r["data-path"])));
+      assertTrue("HOME-PLAN-REAL-3 the body holds the Now card, Waiting and Meetings, in that order",
+        full.bodyParts.join("|") === "now|waiting|meetings", full.bodyParts.join("|"));
+      assertTrue("HOME-PLAN-REAL-4 the Now card is drawn once on Home, inside the panel",
+        full.nowCards.length === 1 && full.nowCards[0].parent === full.body, String(full.nowCards.length));
+      assertTrue("HOME-PLAN-REAL-5 Waiting and Meetings still render their rows",
+        full.rows.map((r) => r["data-path"]).join("|") === "spice/tasks/Late/notes/Ask Jason.md|spice/meetings/notes/Standup-2026-07-02.md",
+        full.rows.map((r) => r["data-path"]).join("|"));
+      const still = full.shutdown();
+      assertTrue("HOME-PLAN-REAL-6 Shut down still lists the overdue and due-today tasks",
+        still.length === 33 && still[0] === "spice/tasks/Late/Late.md" && still.includes("spice/tasks/Due 32/Due 32.md"), String(still.length));
+    } finally { full.cleanup(); }
+
+    const bare = await draw({});
+    try {
+      assertTrue("HOME-PLAN-REAL-7 with nothing pinned, waiting or scheduled: 0-count chips are hidden and the body shows one faint line",
+        bare.chips === "1 overdue|32 due today" && bare.nowCards.length === 0 && bare.taskRows.length === 0
+        && bare.bodyParts.join("|") === "sauce-dp-empty"
+        && textOf(bare.body) === "Nothing pinned, waiting or scheduled. Your tasks are below.",
+        bare.chips + " / " + (bare.body ? textOf(bare.body) : "no body"));
+    } finally { bare.cleanup(); }
   }
 
   // ── HOME-GLANCE render: an empty day renders NO glance element ─────────────

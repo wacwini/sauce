@@ -3,8 +3,9 @@
  * run-task-day-plan.js — the day rhythm (spec 2026-11-13-task-flow-design.md
  * sections 3 and 4). TaskDayPlan picks the Now task (the open task with the
  * newest pinned_at), pins and unpins through RenderSafe.mutate, builds and
- * draws the Plan the day panel (Now, Overdue, Due today, meetings, Waiting)
- * and the Now card, and runs Shut down: one task at a time through
+ * draws the Plan the day panel (count chips in the head; the Now card,
+ * Waiting and meetings in the body, and no task rows since 2026-11-16), and
+ * runs Shut down: one task at a time through
  * TaskTodayList.reschedule and TaskDialog.markDone, then a `## Shutdown`
  * section in today's daily note that a second run replaces. TaskDayPlanInit
  * registers `Sauce: Shut down the day`. Zero-dep; exit 0 iff all pass.
@@ -176,6 +177,11 @@ function setup(opts) {
     ok('DP-PLAN-2 counts for the panel head', JSON.stringify(model.counts) === JSON.stringify({ overdue: 2, today: 2, meetings: 1, waiting: 1 }), JSON.stringify(model.counts));
     ok('DP-PLAN-3 the signature changes when the Now task changes',
       DPC.signature(model) !== DPC.signature(DPC.planModel({ tasks: tasks.map((t) => Object.assign({}, t, { pinned_at: '' })), today: TODAY })));
+    const meetWait = { meetings: [{ path: 'm.md', title: 'Standup', time: '9:00 AM' }], waiting: [{ path: 'w.md' }] };
+    const renamed = DPC.planModel(Object.assign({ tasks: tasks.map((t) => (t.title === 'Pay rent' ? Object.assign({}, t, { title: 'Pay the rent' }) : t)), today: TODAY }, meetWait));
+    const fewer = DPC.planModel(Object.assign({ tasks: tasks.filter((t) => t.title !== 'Pay rent'), today: TODAY }, meetWait));
+    ok('DP-PLAN-4 the signature follows the due counts the panel shows, not the titles of tasks it no longer lists',
+      DPC.signature(model) === DPC.signature(renamed) && DPC.signature(model) !== DPC.signature(fewer));
 
     const prog = DPC.subtaskProgress(tasks, now);
     ok('DP-PROG-1 subtask progress counts the folder children, done and open', prog.done === 1 && prog.total === 2, JSON.stringify(prog));
@@ -343,10 +349,14 @@ function setup(opts) {
   }
 
   // ---------- render ----------
+  const isTaskRow = (r) => /^spice\/tasks\//.test(r.getAttribute('data-path') || '') && !/\/notes\//.test(r.getAttribute('data-path') || '');
+  const chipsOf = (host) => host.one('sauce-dp-plan-head').all('sauce-dp-count').map((c) => c.textContent).join('|');
   {
     const { DP, app } = setup({ waiting: (items) => items.filter((i) => i.sent_at).map((i) => Object.assign({}, i, { days: 2, taskTitle: 'Ship routes' })) });
     const host = el('div');
     const model = DP.renderDay(host, { today: TODAY, meetingPages: [{ file: { path: 'spice/meetings/notes/Standup-2026-11-13.md', name: 'Standup-2026-11-13' } }], surface: 'home', open: true });
+    const panel = host.one('sauce-dp-plan');
+    const body = panel && panel.one('sauce-dp-plan-body');
     const card = host.one('sauce-dp-now');
     ok('DP-RENDER-1 the Now card shows the title, the due chip and subtask progress',
       card && card.one('sauce-dp-now-title').textContent === 'Ship routes'
@@ -364,24 +374,35 @@ function setup(opts) {
     await card.one('sauce-dp-open').fire('click');
     ok('DP-RENDER-5 Open opens the task', app._opened.some((o) => o.p === 'spice/tasks/Ship routes/Ship routes.md'));
 
-    const panel = host.one('sauce-dp-plan');
-    ok('DP-RENDER-6 the Home panel is open; the counts sit in the head',
-      panel && panel.open === true && panel.one('sauce-dp-plan-head').all('sauce-dp-count').map((c) => c.textContent).join('|') === '2 overdue|2 today|1 meeting|1 waiting',
-      panel && panel.one('sauce-dp-plan-head').all('sauce-dp-count').map((c) => c.textContent).join('|'));
-    const groups = panel.all('sauce-dp-group').map((g) => g.getAttribute('data-group'));
-    ok('DP-RENDER-7 groups: Now, Overdue, Due today, Meetings, Waiting', groups.join('|') === 'now|overdue|today|meetings|waiting', groups.join('|'));
+    ok('DP-RENDER-6 the Home panel is open; the head counts overdue, due today, waiting and meetings, in that order',
+      panel && panel.open === true && chipsOf(panel) === '2 overdue|2 due today|1 waiting|1 meeting', panel && chipsOf(panel));
+    ok('DP-RENDER-6b the overdue chip carries the warning tone', panel.one('sauce-dp-plan-head').all('sauce-dp-count')[0].className === 'sauce-dp-count is-overdue');
+    const parts = body ? body.children.map((c) => (c.className === 'sauce-dp-now' ? 'now' : c.getAttribute('data-group') || c.className)) : [];
+    ok('DP-RENDER-7 the body holds the Now card, then Waiting, then Meetings, and nothing else', parts.join('|') === 'now|waiting|meetings', parts.join('|'));
+    ok('DP-RENDER-7b no task rows in the panel: no Now, Overdue or Due today list, no row for any task',
+      panel.all('sauce-dp-row').length === 2 && !panel.all('sauce-dp-row').some(isTaskRow)
+      && !panel.all('sauce-dp-group').some((g) => /^(now|overdue|today)$/.test(g.getAttribute('data-group') || ''))
+      && !/Call bank|Pay rent|Old pin/.test(panel.textContent), panel.all('sauce-dp-row').map((r) => r.getAttribute('data-path')).join('|'));
+    ok('DP-RENDER-7c the Now card is drawn once, inside the panel body, never above the panel',
+      host.all('sauce-dp-now').length === 1 && card.parentNode === body && host.children.length === 1 && host.children[0] === panel);
     const waitRow = panel.all('sauce-dp-group').find((g) => g.getAttribute('data-group') === 'waiting').one('sauce-dp-row');
     ok('DP-RENDER-8 a Waiting row says how long it has waited, to whom and via what', /Waiting 2d · to Jason · Slack/.test(waitRow.textContent), waitRow.textContent);
     const meetRow = panel.all('sauce-dp-group').find((g) => g.getAttribute('data-group') === 'meetings').one('sauce-dp-row');
     ok('DP-RENDER-9 meetings show their title without the date', meetRow.textContent === 'Standup', meetRow.textContent);
-    await panel.all('sauce-dp-row').find((r) => r.getAttribute('data-path') === 'spice/tasks/Call bank/Call bank.md').fire('click');
-    ok('DP-RENDER-10 every row opens its note', app._opened.some((o) => o.p === 'spice/tasks/Call bank/Call bank.md'));
+    await waitRow.fire('click');
+    await meetRow.fire('click');
+    ok('DP-RENDER-10 every row opens its note', app._opened.some((o) => o.p === 'spice/tasks/Ship routes/notes/Sent update.md')
+      && app._opened.some((o) => o.p === 'spice/meetings/notes/Standup-2026-11-13.md'));
     ok('DP-RENDER-11 the head carries Shut down', !!panel.one('sauce-dp-plan-head').one('sauce-dp-shutdown'));
     ok('DP-RENDER-12 the model comes back for the caller', model && model.now && model.now.title === 'Ship routes');
+    ok('DP-RENDER-12b no empty line when there is something to show', !panel.one('sauce-dp-empty'));
 
     const daily = el('div');
     DP.renderDay(daily, { today: TODAY, surface: 'daily', open: false });
     ok('DP-RENDER-13 the daily note panel starts collapsed', daily.one('sauce-dp-plan').open === false);
+    ok('DP-RENDER-13b the daily note panel lists no tasks either; its Now card sits inside it',
+      !daily.one('sauce-dp-plan').all('sauce-dp-row').some(isTaskRow) && daily.children.length === 1
+      && daily.all('sauce-dp-now').length === 1 && daily.one('sauce-dp-now').parentNode === daily.one('sauce-dp-plan-body'));
     daily.one('sauce-dp-plan').open = true;
     await daily.one('sauce-dp-plan').fire('toggle');
     const again = el('div');
@@ -395,6 +416,36 @@ function setup(opts) {
     DP.renderDay(host, { today: '2026-11-25', surface: 'home', open: true });
     ok('DP-RENDER-15 with nothing pinned there is no Now card and no Waiting group',
       !host.one('sauce-dp-now') && !host.all('sauce-dp-group').some((g) => g.getAttribute('data-group') === 'waiting'));
+    const empty = host.one('sauce-dp-plan-body').one('sauce-dp-empty');
+    ok('DP-EMPTY-1 with no Now, Waiting or meetings the body shows one faint line, even with overdue tasks',
+      empty && empty.textContent === 'Nothing pinned, waiting or scheduled. Your tasks are below.'
+      && host.one('sauce-dp-plan-body').children.length === 1 && chipsOf(host) === '3 overdue|0 due today', host.one('sauce-dp-plan-body').textContent + ' / ' + chipsOf(host));
+  }
+  {
+    const many = [];
+    for (let i = 1; i <= 32; i++) many.push(TASK('spice/tasks/Due ' + i + '/Due ' + i + '.md', { title: 'Due ' + i, status: 'open', due: TODAY }));
+    const { DP } = setup({ files: many, noWaiting: true });
+    const host = el('div');
+    const m = DP.renderDay(host, { today: TODAY, surface: 'home', open: true });
+    ok('DP-RENDER-16 32 tasks due today: the head says 32 due today, the body lists none of them and shows the empty line',
+      m.counts.today === 32 && chipsOf(host) === '32 due today' && host.all('sauce-dp-row').length === 0
+      && !/Due 1/.test(host.one('sauce-dp-plan-body').textContent)
+      && host.one('sauce-dp-empty').textContent === 'Nothing pinned, waiting or scheduled. Your tasks are below.', chipsOf(host));
+  }
+  {
+    const DPC = loadDP({});
+    const text = (k) => DPC.countChips(k).map((c) => c.text).join('|');
+    ok('DP-CHIPS-1 at 0, overdue, waiting and meetings are left out; due today always shows',
+      text({ overdue: 0, today: 0, waiting: 0, meetings: 0 }) === '0 due today' && text({}) === '0 due today', text({}));
+    ok('DP-CHIPS-2 every chip in order: overdue, due today, waiting, meetings', text({ overdue: 3, today: 5, waiting: 2, meetings: 4 }) === '3 overdue|5 due today|2 waiting|4 meetings');
+    ok('DP-CHIPS-3 one meeting reads singular; waiting and meetings show alone when the rest are 0',
+      text({ meetings: 1 }) === '0 due today|1 meeting' && text({ waiting: 1 }) === '0 due today|1 waiting');
+    ok('DP-CHIPS-4 0 due today is muted; overdue is in the warning tone',
+      DPC.countChips({}).find((c) => c.key === 'today').cls === 'is-today is-zero'
+      && DPC.countChips({ overdue: 1, today: 1 }).map((c) => c.cls).join('|') === 'is-overdue|is-today');
+    const host = el('div');
+    DPC.renderPlan(host, { model: DPC.planModel({ today: TODAY, meetings: [{ path: 'a.md', title: 'A' }, { path: 'b.md', title: 'B' }] }) });
+    ok('DP-CHIPS-5 the drawn head follows the same rules', chipsOf(host) === '0 due today|2 meetings', chipsOf(host));
   }
 
   // ---------- Shut down ----------
@@ -497,6 +548,20 @@ function setup(opts) {
     await finishBtn.fire('click');
     await new Promise((r) => setTimeout(r, 0));
     DPC.finishShutdown = orig;
+  }
+  {
+    const opened = [];
+    const { DP, app, win } = setup({ doc: { body: {}, head: null } });
+    win.customJS.SauceModal = { open: (o) => { opened.push(o); return { close() {} }; } };
+    const host = el('div');
+    DP.renderDay(host, { app, today: TODAY, surface: 'home', open: true });
+    await host.one('sauce-dp-shutdown').fire('click');
+    const body = el('div');
+    if (opened[0]) opened[0].body(body);
+    ok('DP-SHUT-16 the panel lists no tasks, but its Shut down still lists every overdue and due-today task',
+      !host.all('sauce-dp-row').some(isTaskRow) && opened.length === 1
+      && body.all('sauce-dp-sd-row').map((r) => r.getAttribute('data-path')).join('|') === 'spice/tasks/Old pin/Old pin.md|spice/tasks/Call bank/Call bank.md|spice/tasks/Pay rent/Pay rent.md|spice/tasks/Ship routes/Ship routes.md',
+      body.all('sauce-dp-sd-row').map((r) => r.getAttribute('data-path')).join('|'));
   }
 
   // ---------- review fixes: pin clears, Now by path, done refused, twice, _done skip, moved subtask ----------
