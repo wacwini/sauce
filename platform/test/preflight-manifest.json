@@ -1112,6 +1112,14 @@
       "lane": "parallel"
     },
     {
+      "id": "undo-bar",
+      "cmd": [
+        "node",
+        "platform/test/run-undo-bar.js"
+      ],
+      "lane": "parallel"
+    },
+    {
       "id": "todo-collapse",
       "cmd": [
         "node",

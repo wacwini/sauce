@@ -42,7 +42,8 @@
     "TaskSets",
     "TaskDayPlan",
     "TaskDayPlanInit",
-    "TaskMove"
+    "TaskMove",
+    "SauceUndoBar"
   ],
   "customjs_startup_scripts": [
     "TaskJumpInit",
@@ -116,6 +117,10 @@
     {
       "source": "task-move.js",
       "dest": "{{scripts_path}}/task-entity/task-move.js"
+    },
+    {
+      "source": "undo-bar.js",
+      "dest": "{{scripts_path}}/task-entity/undo-bar.js"
     }
   ],
   "post_install": [],

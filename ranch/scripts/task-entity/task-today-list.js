@@ -576,7 +576,9 @@ class TaskTodayList {
      * task), default TaskMove.moveNote). deps.onStart(path) / deps.onEnd()
      * mirror the drag for the host; deps.onMoved(result, from, task) runs
      * after a nest and deps.onNoteMoved(result, docPath, task) after a note
-     * move. Returns true when wired.
+     * move; deps.onUndone(result, from, task) and
+     * deps.onNoteUndone(result, docPath, task) run when the Undo bar puts
+     * that move back. Returns true when wired.
      */
     static wireRowDrag(row, task, deps) {
         const d = deps || {};
@@ -621,14 +623,20 @@ class TaskTodayList {
             if (typeof d.nest === 'function') return d.nest;
             const TM = TaskTodayList._taskMove();
             return TM && typeof TM.nest === 'function'
-                ? (from, target) => TM.nest(from, target.path, { onDone: (res) => hook('onMoved', res, from, target) }) : null;
+                ? (from, target) => TM.nest(from, target.path, {
+                    onDone: (res) => hook('onMoved', res, from, target),
+                    onUndone: (res) => hook('onUndone', res, from, target),
+                }) : null;
         };
         const noteFn = () => {
             if (!d.acceptNotes) return null;
             if (typeof d.moveNote === 'function') return d.moveNote;
             const TM = TaskTodayList._taskMove();
             return TM && typeof TM.moveNote === 'function'
-                ? (docPath, target) => TM.moveNote(docPath, target.path, { onDone: (res) => hook('onNoteMoved', res, docPath, target) }) : null;
+                ? (docPath, target) => TM.moveNote(docPath, target.path, {
+                    onDone: (res) => hook('onNoteMoved', res, docPath, target),
+                    onUndone: (res) => hook('onNoteUndone', res, docPath, target),
+                }) : null;
         };
         const judge = (event) => {
             const st = TaskTodayList._dragOf(event);
@@ -692,7 +700,8 @@ class TaskTodayList {
      * hidden until a subtask is dragged, and only while it can act (a
      * deps.makeTopLevel(path), else TaskMove.nest(path, null) loaded).
      * Dropping the subtask on it moves it to the top level;
-     * deps.onMoved(result, path, null) runs after. deps.before puts
+     * deps.onMoved(result, path, null) runs after, and
+     * deps.onUndone(result, path, null) after its undo. deps.before puts
      * it in front of that child of `host` instead of first. Returns the
      * strip, or null.
      */
@@ -708,7 +717,10 @@ class TaskTodayList {
             if (typeof d.makeTopLevel === 'function') return d.makeTopLevel;
             const TM = TaskTodayList._taskMove();
             if (!TM || typeof TM.nest !== 'function') return null;
-            return (from) => TM.nest(from, null, { onDone: (res) => { try { if (typeof d.onMoved === 'function') d.onMoved(res, from, null); } catch (_e) {} } });
+            return (from) => TM.nest(from, null, {
+                onDone: (res) => { try { if (typeof d.onMoved === 'function') d.onMoved(res, from, null); } catch (_e) {} },
+                onUndone: (res) => { try { if (typeof d.onUndone === 'function') d.onUndone(res, from, null); } catch (_e) {} },
+            });
         };
         strip.__canLift = () => !!lift();
         const strips = TaskTodayList._strips || (TaskTodayList._strips = new Set());
@@ -2026,6 +2038,7 @@ class TaskTodayList {
                 const TM = TaskTodayList._taskMove();
                 if (TM && typeof TM.menuEntries === 'function' && opts.moveMenu !== false) {
                     const moveOpts = typeof opts.onMoved === 'function' ? { onDone: (res) => { try { opts.onMoved(task, res); } catch (_e) {} } } : {};
+                    if (typeof opts.onUndone === 'function') moveOpts.onUndone = (res) => { try { opts.onUndone(task, res); } catch (_e) {} };
                     try { for (const e of TM.menuEntries(task, moveOpts) || []) entries.push(e); } catch (_e) { /* the rest of the menu still opens */ }
                 }
                 // Pin as Now / Unpin (TaskDayPlan, spec §4), once it has loaded.

@@ -334,6 +334,25 @@ never fires on touch, so the phone has the menu only (no long-press drag).
   its subtasks), Make top-level (subtasks), Move to project…, Move up / down
   (where manual order applies) and, on Notes rows, Move note to task….
 - **Writes.** Every move is one `RenderSafe.mutate` gesture write.
+- **Undo.** Every move that lands, by drag or ⋯ menu, shows an Undo bar at the
+  bottom centre for four seconds (`SauceUndoBar`, `undo-bar.js`): "Moved 'X'
+  under 'Y'", "Moved 'X' to top level", "Moved 'X' to <project or trip>",
+  "Moved note 'N' to 'Y'" or "Reordered subtasks of 'Y'". It pauses while
+  hovered or focused, a new move replaces it (the older move can no longer be
+  undone), and Cmd/Ctrl+Z undoes while it shows and focus is not in an editor
+  or a text field. On a phone it sits above the navbar and toolbar. A refused
+  or failed move shows no bar. Before the move the task's path and its
+  `parent_task`, `rank`, `sibling_rank`, `project`, `project_slug`, `trip`,
+  `trip_slug` and `due` are taken (`TaskDialog.moveSnapshot`; a note's path,
+  `task:` and title, `TaskDocs.moveSnapshot`; for a reorder every sibling's
+  `sibling_rank`). Undo, inside `RenderSafe.mutate`, puts the file or folder
+  back at its old path with `renameFile` (loops refused as for a move; a
+  taken path gets the reparent naming and "Restored, but renamed to 'Z'") and
+  writes those fields back, removing any that were absent
+  (`TaskDialog.moveBack`, `TaskDocs.moveBack`). The bar then reads "Undone"
+  for a second; a failure shows "Couldn't undo: <reason>". The To-Do view and
+  the task card repaint at once (`onUndone`); other surfaces on Dataview's
+  next render.
 
 ## API (`customJS.TaskEntity`)
 

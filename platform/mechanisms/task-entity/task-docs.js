@@ -30,6 +30,8 @@ class TaskDocs {
     renderHeader(dv, opts) { return TaskDocs.renderHeader(dv, opts); }
     rename(app, docPath, title) { return TaskDocs.rename(app, docPath, title); }
     moveTo(app, docPath, taskPath) { return TaskDocs.moveTo(app, docPath, taskPath); }
+    moveSnapshot(app, docPath) { return TaskDocs.moveSnapshot(app, docPath); }
+    moveBack(app, docPath, snap) { return TaskDocs.moveBack(app, docPath, snap); }
     withHeader(text) { return TaskDocs.withHeader(text); }
     taskPathOf(docPath) { return TaskDocs.taskPathOf(docPath); }
     commsState(fm, followUps, today) { return TaskDocs.commsState(fm, followUps, today); }
@@ -377,6 +379,85 @@ class TaskDocs {
             } catch (_e) { /* best effort */ }
             return { ok: false, reason: String((e && e.message) || e) };
         }
+    }
+
+    /**
+     * What a note move could change, taken before the move so moveBack can
+     * put it back: { path, task, title } with `task` and `title` as they are
+     * on file (undefined when absent) and `name` its display title. Null
+     * when the note does not resolve.
+     */
+    static moveSnapshot(app, docPath) {
+        const file = app && app.vault ? app.vault.getAbstractFileByPath(docPath) : null;
+        if (!file || Array.isArray(file.children)) return null;
+        const fm = TaskDocs._fmOf(app, file) || {};
+        const own = (k) => (Object.prototype.hasOwnProperty.call(fm, k) ? fm[k] : undefined);
+        const base = String(file.basename != null ? file.basename : String(docPath).split('/').pop().replace(/\.md$/i, ''));
+        const name = fm.title != null && String(fm.title).trim() !== '' ? String(fm.title).trim() : base;
+        return { path: String(file.path), task: own('task'), title: own('title'), name };
+    }
+
+    /**
+     * Put a moved note back where `snap` (moveSnapshot) found it: the undo of
+     * moveTo. It goes back to its old path with fileManager.renameFile when
+     * that path is free; when it is taken, it stays in the old notes folder
+     * named by the rule create uses with the old task as parent, and
+     * `renamed` says the new name. Then `task:` and `title` are put back (an
+     * absent key is removed). Resolves { ok: true, path, from, renamed } or
+     * { ok: false, reason }.
+     */
+    static async moveBack(app, docPath, snap) {
+        const file = app && app.vault ? app.vault.getAbstractFileByPath(docPath) : null;
+        if (!file || Array.isArray(file.children)) return { ok: false, reason: 'note not found' };
+        const s = snap || {};
+        if (!s.path) return { ok: false, reason: 'nothing to restore' };
+        const from = String(file.path);
+        const exists = (p) => !!app.vault.getAbstractFileByPath(p);
+        const dir = s.path.slice(0, s.path.lastIndexOf('/'));
+        const oldBase = s.path.slice(s.path.lastIndexOf('/') + 1).replace(/\.md$/i, '');
+        let to = from;
+        let renamed = '';
+        if (from !== s.path) {
+            const parts = dir.split('/');
+            for (let i = 1; i <= parts.length; i++) {
+                const d = parts.slice(0, i).join('/');
+                if (!d || exists(d)) continue;
+                try { await app.vault.createFolder(d); } catch (_e) { /* made meanwhile */ }
+            }
+            let name = oldBase;
+            if (exists(s.path)) {
+                const TE = TaskDocs._te();
+                const taskPath = TaskDocs.taskPathOf(s.path);
+                let taskTitle = taskPath ? taskPath.split('/').pop().replace(/\.md$/i, '') : '';
+                try {
+                    const tf = taskPath ? app.vault.getAbstractFileByPath(taskPath) : null;
+                    const tfm = tf ? TaskDocs._fmOf(app, tf) : null;
+                    if (tfm && tfm.title != null && String(tfm.title).trim()) taskTitle = String(tfm.title).trim();
+                } catch (_e) {}
+                const taken = TaskDocs._takenNames(app);
+                const title = String(s.name || oldBase);
+                name = TE && typeof TE.taskName === 'function'
+                    ? TE.taskName(title, { parentTitle: taskTitle, taken })
+                    : title.replace(/[\\/:*?"<>|#^[\]]/g, '').trim() || 'Note';
+                for (let n = 2; exists(dir + '/' + name + '.md') && n < 10000; n++) name = oldBase + ' ' + n;
+                renamed = name;
+            }
+            to = dir + '/' + name + '.md';
+            try {
+                await app.fileManager.renameFile(file, to);
+            } catch (e) {
+                return { ok: false, reason: String((e && e.message) || e) };
+            }
+        }
+        try {
+            await app.fileManager.processFrontMatter(file, (f) => {
+                if (s.task === undefined) delete f.task; else f.task = s.task;
+                if (s.title === undefined) delete f.title; else f.title = s.title;
+            });
+        } catch (e) {
+            return { ok: false, reason: String((e && e.message) || e) };
+        }
+        return { ok: true, path: to, from, renamed };
     }
 
     /**
