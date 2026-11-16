@@ -502,6 +502,32 @@ ok('TD-FOLDER a folder task keeps its notes in <Task>/notes; a flat task has non
     await hIn2._l.keydown(key('Enter'));
     await new Promise((r) => setTimeout(r, 0));
     ok('TD-RENAME-REVERT a failed rename puts the old name back on the card', by(card, 'sauce-tdv-title')[0].textContent === 'Redis failover prompt');
+
+    const copied = [];
+    const priorTTL = win.customJS.TaskTodayList;
+    win.customJS.TaskTodayList = { fullPath: (p) => '/Users/me/vault/' + p, copyText: async (t) => { copied.push(t); return true; } };
+    const sec2 = TD.render(mk('div'), { app: rApp, taskPath: `${R}/Redis.md` });
+    const rows2 = by(sec2, 'sauce-tnv-doc');
+    const pathBtns = rows2.map((r) => by(r, 'sauce-tnv-doc-path')[0]);
+    ok('TD-COPY-PATH-ROW every note on the task card has a Copy full path button',
+      rows2.length > 0 && pathBtns.every((b) => b && b._attrs['aria-label'] === 'Copy full path'), String(rows2.length));
+    const firstTitle = by(rows2[0], 'sauce-tnv-doc-title')[0].textContent;
+    await pathBtns[0]._l.click({ stopPropagation() {} });
+    ok('TD-COPY-PATH-ROW-COPY Copy full path copies the note file full path on disk, like task rows, and shows a check',
+      copied.length === 1 && copied[0].startsWith('/Users/me/vault/' + R + '/notes/') && copied[0].endsWith('.md')
+      && pathBtns[0].classes.has('is-copied') && /M20 6 9 17l-5-5/.test(pathBtns[0]._html), JSON.stringify(copied) + ' ' + firstTitle);
+    const hBtn = by(card, 'sauce-tdv-path')[0];
+    await hBtn._l.click({ stopPropagation() {} });
+    ok('TD-COPY-PATH-HEADER the header card copies the note current path, after a rename too',
+      hBtn && copied[1] === '/Users/me/vault/' + `${R}/notes/Redis failover prompt.md`, JSON.stringify(copied));
+    win.customJS.TaskTodayList = undefined;
+    const viaAdapter = TD.fullPath('spice/tasks/A/notes/P.md', { vault: { adapter: { getBasePath: () => '/v/' } } });
+    const bare = TD.fullPath('spice/tasks/A/notes/P.md', { vault: { adapter: {} } });
+    ok('TD-COPY-PATH-FALLBACK without TaskTodayList the full path comes from the vault folder, and on a phone it is the vault path',
+      viaAdapter === '/v/spice/tasks/A/notes/P.md' && bare === 'spice/tasks/A/notes/P.md' && TD.fullPath('') === '', viaAdapter + ' ' + bare);
+    ok('TD-COPY-PATH-CSS the path button shows on hover on desktop and always on a phone',
+      /\.sauce-tnv-doc:hover \.sauce-tnv-doc-path/.test(TD._CSS) && /body\.is-mobile \.sauce-tnv-doc \.sauce-tnv-doc-path \{ opacity: 1;/.test(TD._CSS));
+    win.customJS.TaskTodayList = priorTTL;
   }
 
   {

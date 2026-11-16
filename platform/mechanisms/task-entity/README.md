@@ -115,6 +115,10 @@ without being steps of it, so they are notes, not subtasks (`TaskDocs`,
   or leaving the field saves, Escape cancels. `TaskDocs.rename` sets the
   `title` and renames the file by the Names rule above with
   `fileManager.renameFile`, so links follow; the note stays in `notes/`.
+- **Copy full path.** Each Notes row and the header card have a copy button,
+  like task rows, that copies the note's full path on disk
+  (`TaskDocs.fullPath`, through `TaskTodayList.fullPath`); on a phone it
+  copies the vault path.
 - **Agents.** The vault's CLAUDE.md directory map names this folder, so a
   session writes its prompts, handoffs and findings here, and sets
   `session:` on a handoff.
