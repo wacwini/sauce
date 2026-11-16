@@ -119,6 +119,13 @@ without being steps of it, so they are notes, not subtasks (`TaskDocs`,
   like task rows, that copies the note's full path on disk
   (`TaskDocs.fullPath`, through `TaskTodayList.fullPath`); on a phone it
   copies the vault path.
+- **Delete.** Each Notes row and the header card have a trash button that
+  deletes that one note after a confirm dialog. `TaskDocs.trashNote` uses
+  `fileManager.trashFile`, so the note goes where the vault's "Deleted
+  files" setting says, and the dialog says where that is (and warns when
+  the setting deletes permanently). It refuses anything outside a task's
+  `notes/` folder and a `type: task` note. Deleting from the header card
+  first takes that tab to the task.
 - **Agents.** The vault's CLAUDE.md directory map names this folder, so a
   session writes its prompts, handoffs and findings here, and sets
   `session:` on a handoff.

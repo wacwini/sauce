@@ -1495,6 +1495,12 @@ class TaskDocs {
             '.sauce-tdv-title-row.is-renaming .sauce-tdv-path { display: none; }',
             '@media (hover: hover) { .sauce-tnv-doc .sauce-tnv-doc-path { opacity: 0; transition: opacity 120ms ease; } .sauce-tnv-doc:hover .sauce-tnv-doc-path, .sauce-tnv-doc .sauce-tnv-doc-path:focus-visible, .sauce-tnv-doc .sauce-tnv-doc-path.is-copied { opacity: 1; } }',
             'body.is-mobile .sauce-tnv-doc .sauce-tnv-doc-path { opacity: 1; width: 36px; height: 36px; }',
+            'body .sauce-tdv-trash.sauce-tdv-trash, body .sauce-tnv-doc-trash.sauce-tnv-doc-trash { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; min-height: 0; padding: 0; border: none; border-radius: var(--radius-s, 6px); background: transparent; box-shadow: none; color: var(--text-faint); cursor: pointer; }',
+            '@media (hover: hover) { body .sauce-tdv-trash.sauce-tdv-trash:hover, body .sauce-tnv-doc-trash.sauce-tnv-doc-trash:hover { color: var(--text-error, #e5484d); background: var(--background-modifier-hover); } }',
+            'body .sauce-tdv-trash:disabled, body .sauce-tnv-doc-trash:disabled { opacity: 0.4; cursor: default; }',
+            '.sauce-tdv-title-row.is-renaming .sauce-tdv-trash { display: none; }',
+            '@media (hover: hover) { .sauce-tnv-doc .sauce-tnv-doc-trash { opacity: 0; transition: opacity 120ms ease; } .sauce-tnv-doc:hover .sauce-tnv-doc-trash, .sauce-tnv-doc .sauce-tnv-doc-trash:focus-visible { opacity: 1; } }',
+            'body.is-mobile .sauce-tnv-doc .sauce-tnv-doc-trash { opacity: 1; width: 36px; height: 36px; }',
             'body .sauce-tdv-rename-input.sauce-tdv-rename-input { box-sizing: border-box; width: 100%; min-width: 0; height: auto; min-height: 32px; padding: 4px 8px; border: 1px solid var(--interactive-accent); border-radius: var(--radius-s, 6px); background: var(--background-primary); color: var(--text-normal); font: inherit; }',
             'body .sauce-tdv-title-row .sauce-tdv-rename-input.sauce-tdv-rename-input { font-size: 1.2em; font-weight: 700; }',
             'body.is-phone .sauce-tdv-rename-input.sauce-tdv-rename-input { font-size: 16px; }',
@@ -1651,6 +1657,131 @@ class TaskDocs {
         } catch (_e) { return null; }
     }
 
+    /**
+     * Move the task note at `path` to the trash the way Obsidian's own
+     * Delete does: app.fileManager.trashFile, which follows the vault's
+     * "Deleted files" setting. Refuses anything that is not a note in a
+     * task's notes/ folder, and a task note itself. Resolves
+     * { ok: true, path } or { ok: false, reason }. Never throws.
+     */
+    static async trashNote(app, path) {
+        try {
+            const p = String(path == null ? '' : path);
+            const file = app && app.vault && typeof app.vault.getAbstractFileByPath === 'function' ? app.vault.getAbstractFileByPath(p) : null;
+            if (!file || Array.isArray(file.children) || !/\.md$/i.test(p)) return { ok: false, reason: 'note not found' };
+            if (!TaskDocs.taskPathOf(p)) return { ok: false, reason: 'not one of a task\'s notes' };
+            const fm = TaskDocs._fmOf(app, file) || {};
+            if (String(fm.type || '') === 'task') return { ok: false, reason: 'that is a task, not a note' };
+            if (app.fileManager && typeof app.fileManager.trashFile === 'function') await app.fileManager.trashFile(file);
+            else if (typeof app.vault.trash === 'function') await app.vault.trash(file, true);
+            else return { ok: false, reason: 'the trash is unavailable' };
+            return { ok: true, path: p };
+        } catch (e) {
+            return { ok: false, reason: (e && (e.message || String(e))) || 'unknown' };
+        }
+    }
+
+    /**
+     * Where a deleted note goes, from the vault's "Deleted files" setting
+     * (trashOption: 'system', 'local' or 'none'), as the sentence the
+     * confirm dialog shows. Pure apart from reading the setting.
+     */
+    static trashWhere(app) {
+        let opt = 'system';
+        try { if (app && app.vault && typeof app.vault.getConfig === 'function') opt = String(app.vault.getConfig('trashOption') || 'system'); } catch (_e) { opt = 'system'; }
+        if (opt === 'none') return 'Obsidian is set to delete files permanently, so this cannot be undone.';
+        if (opt === 'local') return 'You can recover it from the vault\'s .trash folder.';
+        return 'You can recover it from the system trash.';
+    }
+
+    /**
+     * Ask before deleting the note titled `title`. Resolves true when the
+     * person chose Delete, false otherwise (Cancel, Esc, no dialog).
+     */
+    static confirmTrash(app, title) {
+        return new Promise((resolve) => {
+            const SM = window.customJS && window.customJS.SauceModal;
+            const doc = typeof document !== 'undefined' ? document : null;
+            if (!SM || typeof SM.open !== 'function' || !doc) { resolve(false); return; }
+            let settled = false;
+            const finish = (v) => { if (!settled) { settled = true; resolve(v); } };
+            const handle = SM.open({
+                doc,
+                title: 'Delete note?',
+                autofocus: '.sauce-tdv-trash-cancel',
+                body: (body) => {
+                    const copy = body.createEl('div', { cls: 'sauce-tdv-trash-copy' });
+                    copy.createSpan({ text: 'This moves ' });
+                    copy.createEl('strong', { text: '“' + String(title || 'this note') + '”' });
+                    copy.createSpan({ text: ' to the trash. ' + TaskDocs.trashWhere(app) });
+                },
+                buttons: [
+                    { label: 'Cancel', action: 'cancel', className: 'sauce-tdv-trash-cancel' },
+                    { label: 'Delete', tone: 'danger', className: 'sauce-tdv-trash-confirm', onClick: () => { finish(true); } },
+                ],
+                onClose: () => finish(false),
+            });
+            if (!handle) finish(false);
+        });
+    }
+
+    /**
+     * A "Delete note" icon button in `host`. A click asks first
+     * (confirmTrash), then trashes the note through RenderSafe.mutate:
+     * opts.optimistic runs at once, opts.revert if the delete fails, and
+     * opts.onDeleted(path) after it succeeds. `pathOf` and `titleOf` are
+     * values or functions read at click time. Never throws.
+     */
+    static _trashButton(host, cls, pathOf, titleOf, app, opts) {
+        try {
+            const o = opts || {};
+            const btn = host.createEl('button', { cls });
+            const label = () => { const t = typeof titleOf === 'function' ? titleOf() : titleOf; return t ? 'Delete ' + t : 'Delete note'; };
+            try { btn.setAttribute('type', 'button'); btn.setAttribute('aria-label', label()); btn.setAttribute('title', 'Delete note'); } catch (_e) {}
+            btn.innerHTML = TaskDocs._ICONS.trash;
+            btn.addEventListener('click', async (ev) => {
+                try { ev.stopPropagation(); } catch (_e) {}
+                const rel = typeof pathOf === 'function' ? pathOf() : pathOf;
+                const name = typeof titleOf === 'function' ? titleOf() : titleOf;
+                if (!rel || btn.disabled) return;
+                if (!(await TaskDocs.confirmTrash(app, name))) return;
+                const RenderSafe = window.customJS && window.customJS.RenderSafe;
+                if (!RenderSafe || typeof RenderSafe.mutate !== 'function') { TaskDocs._notice('Could not delete the note right now', 4000); return; }
+                try { btn.disabled = true; } catch (_e) {}
+                const res = await RenderSafe.mutate({
+                    app,
+                    path: rel,
+                    failureMessage: 'Could not delete the note',
+                    optimistic: () => { try { if (typeof o.optimistic === 'function') o.optimistic(); } catch (_e) {} },
+                    write: async () => {
+                        const r = await TaskDocs.trashNote(app, rel);
+                        if (!r.ok) throw new Error(r.reason);
+                        return r;
+                    },
+                    revert: () => { try { if (typeof o.revert === 'function') o.revert(); } catch (_e) {} },
+                });
+                try { btn.disabled = false; } catch (_e) {}
+                if (res && res.ok) {
+                    TaskDocs._notice('Deleted ' + (name || 'the note'), 2500);
+                    try { if (typeof o.onDeleted === 'function') o.onDeleted(rel); } catch (_e) {}
+                }
+            });
+            return btn;
+        } catch (_e) { return null; }
+    }
+
+    /** The workspace leaf whose view holds `el`, or null. Never throws. */
+    static _leafOf(app, el) {
+        let found = null;
+        try {
+            app.workspace.iterateAllLeaves((l) => {
+                if (found || !l || !l.view || !l.view.containerEl) return;
+                if (l.view.containerEl === el || (typeof l.view.containerEl.contains === 'function' && l.view.containerEl.contains(el))) found = l;
+            });
+        } catch (_e) { found = null; }
+        return found;
+    }
+
     /** Each kind's colour: the header card's tint and its icon on the task card. */
     static get TONES() {
         return {
@@ -1679,6 +1810,7 @@ class TaskDocs {
             claude: svg('<path d="M12 3v3"/><path d="M12 18v3"/><path d="m5.6 5.6 2.1 2.1"/><path d="m16.3 16.3 2.1 2.1"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m5.6 18.4 2.1-2.1"/><path d="m16.3 7.7 2.1-2.1"/>', 15),
             resume: svg('<polygon points="6 3 20 12 6 21 6 3"/>', 15),
             check: svg('<path d="M20 6 9 17l-5-5"/>', 15),
+            trash: svg('<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>', 15),
         };
     }
 
@@ -1827,6 +1959,17 @@ class TaskDocs {
             try { renameBtn.setAttribute('type', 'button'); renameBtn.setAttribute('aria-label', 'Rename note'); renameBtn.setAttribute('title', 'Rename note'); } catch (_e) {}
             renameBtn.innerHTML = ICON.pencil;
             TaskDocs._pathButton(titleRow, 'sauce-tdv-path', () => file.path, app);
+            let hereLeaf = null;
+            TaskDocs._trashButton(titleRow, 'sauce-tdv-trash', () => file.path, () => titleEl.textContent, app, {
+                optimistic: () => {
+                    hereLeaf = TaskDocs._leafOf(app, c);
+                    if (hereLeaf && taskFile) { try { hereLeaf.openFile(taskFile); } catch (_e) {} }
+                },
+                revert: () => {
+                    const back = app.vault.getAbstractFileByPath(file.path);
+                    if (hereLeaf && taskFile && back) { try { hereLeaf.openFile(back); } catch (_e) {} }
+                },
+            });
             const startRename = () => {
                 if (titleRow.classList.contains && titleRow.classList.contains('is-renaming')) return;
                 const prior = titleEl.textContent;
@@ -2148,6 +2291,14 @@ class TaskDocs {
                         });
                     });
                     TaskDocs._pathButton(row, 'sauce-tnv-doc-path', d.path, app);
+                    const rowParent = row.parentNode;
+                    const rowNext = () => row.nextSibling;
+                    let after = null;
+                    TaskDocs._trashButton(row, 'sauce-tnv-doc-trash', d.path, () => titleSpan.textContent || d.title, app, {
+                        optimistic: () => { after = rowNext(); try { row.remove(); } catch (_e) {} },
+                        revert: () => { try { if (rowParent) rowParent.insertBefore(row, after && after.parentNode === rowParent ? after : null); } catch (_e) {} },
+                        onDeleted: () => { paint(); },
+                    });
                     if (meta.copy) {
                         const btn = row.createEl('button', { cls: 'sauce-tnv-doc-copy', text: meta.copyLabel });
                         try { btn.setAttribute('type', 'button'); } catch (_e) {}
