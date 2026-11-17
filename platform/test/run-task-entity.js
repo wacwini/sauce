@@ -51,6 +51,32 @@ const fixedMoment = {
     '2026-07-01',
 };
 
+{
+  const parent = { path: 'spice/tasks/Ship/Ship.md', status: 'open', parent_task: '', parent_path: '' };
+  const folderKid = { path: 'spice/tasks/Ship/Wire it/Wire it.md', status: 'open', parent_task: 'Ship', parent_path: 'spice/tasks/Ship/Ship.md' };
+  const flatKid = { path: 'spice/tasks/Flat kid.md', status: 'open', parent_task: 'Ship', parent_path: '' };
+  const doneParent = { path: 'spice/tasks/_done/Old/Old.md', status: 'done', parent_task: '', parent_path: '' };
+  const orphan = { path: 'spice/tasks/Orphan.md', status: 'open', parent_task: 'Old', parent_path: '' };
+  const missing = { path: 'spice/tasks/Lost.md', status: 'open', parent_task: 'Gone', parent_path: 'spice/tasks/Gone/Gone.md' };
+  const all = [parent, folderKid, flatKid, doneParent, orphan, missing];
+  ok('TE-SUB-1 a task under an open, loaded parent is a subtask, by folder path or by flat parent_task name', () => {
+    const idx = TaskEntity.subtaskIndex(all);
+    assert(TaskEntity.isSubtask(folderKid, idx) && TaskEntity.isSubtask(flatKid, idx), 'kids are subtasks');
+    assert(!TaskEntity.isSubtask(parent, idx), 'the parent is not');
+  });
+  ok('TE-SUB-2 an open task under a done or missing parent lists on its own', () => {
+    const idx = TaskEntity.subtaskIndex(all);
+    assert(!TaskEntity.isSubtask(orphan, idx), 'under a done parent');
+    assert(!TaskEntity.isSubtask(missing, idx), 'under a missing parent');
+    assert(TaskEntity.isSubtask(orphan), 'without an index any parent counts');
+  });
+  ok('TE-SUB-3 withoutSubtasks keeps roots and orphans in order', () => {
+    const titles = TaskEntity.withoutSubtasks(all).map((t) => t.path);
+    assert(deepEq(titles, [parent.path, doneParent.path, orphan.path, missing.path]), JSON.stringify(titles));
+    assert(deepEq(TaskEntity.withoutSubtasks(null), []), 'null in, empty out');
+  });
+}
+
 // 1. taskFilename — human-readable "<title>.md" (no timestamp, no hash).
 ok('TE-1 taskFilename is the readable "<title>.md"', () => {
   const fn = TaskEntity.taskFilename({ title: 'Buy milk' }, fixedMoment);

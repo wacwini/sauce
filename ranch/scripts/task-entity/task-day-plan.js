@@ -248,13 +248,18 @@ class TaskDayPlan {
      * What Plan the day shows: { now, overdue, dueToday, meetings, waiting,
      * counts: { overdue, today, meetings, waiting } }. Overdue is every open
      * task due before today, oldest due first; Due today is every open task
-     * due today. `meetings` and `waiting` are passed through as given.
+     * due today. Neither lists a subtask (TaskEntity.isSubtask over `tasks`):
+     * it is on its parent's card. `meetings` and `waiting` are passed through
+     * as given.
      */
     static planModel(input) {
         const o = input || {};
         const today = String(o.today || '');
         const tasks = Array.isArray(o.tasks) ? o.tasks : [];
-        const open = tasks.filter((t) => t && TaskDayPlan._state(t) === 'open');
+        const TE = TaskDayPlan._te();
+        let roots = tasks;
+        try { if (TE && typeof TE.withoutSubtasks === 'function') roots = TE.withoutSubtasks(tasks); } catch (_e) { roots = tasks; }
+        const open = roots.filter((t) => t && TaskDayPlan._state(t) === 'open');
         const title = (t) => TaskDayPlan._str(t.title) || TaskDayPlan._base(t.path);
         const overdue = open
             .filter((t) => { const d = TaskDayPlan._day(t.due); return !!d && !!today && d < today; })
