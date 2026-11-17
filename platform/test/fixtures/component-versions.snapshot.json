@@ -1,9 +1,9 @@
 {
-  "workshop_version": "0.332.2",
+  "workshop_version": "0.332.3",
   "components": {
     "boards": "0.3.0",
     "cowork": "0.42.0",
-    "daily": "0.35.0",
+    "daily": "0.35.1",
     "meetings": "0.20.0",
     "people": "0.9.0",
     "products": "0.4.0",
@@ -44,7 +44,7 @@
     "smart-connections-bridge": "0.3.0",
     "render-safe": "0.3.3",
     "sauce-plugin": "0.3.4",
-    "task-entity": "0.41.1",
+    "task-entity": "0.41.2",
     "modal": "0.2.0",
     "menu-popover": "0.5.0",
     "chrome-bar": "0.8.0",
