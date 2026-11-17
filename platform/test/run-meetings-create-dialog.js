@@ -373,6 +373,75 @@ const typeInto = (input, text) => { input.value = text; if (input.oninput) input
     ok('MCD-ESC-CANCEL Esc and Cancel close without creating', escClosed && !modalOf(e.doc) && calls.length === 0);
   }
 
+  // ── Keyboard attendee flow ────────────────────────────────────────────────
+  {
+    const P = ['Ada Lovelace', 'Bob Ng', 'Cy Park', 'Dan Abel'];
+    ok('PP-ROWS the list leaves out people already picked, whatever is typed, best match first',
+      JSON.stringify(PeoplePicker.rows(P, ['Bob Ng'], '').map((r) => r.name)) === JSON.stringify(['Ada Lovelace', 'Cy Park', 'Dan Abel'])
+      && JSON.stringify(PeoplePicker.rows(P, ['Ada Lovelace'], 'a').map((r) => r.name)) === JSON.stringify(['Dan Abel', 'Cy Park'])
+      && JSON.stringify(PeoplePicker.rows(P, [], 'cy park').map((r) => r.name)) === JSON.stringify(['Cy Park']));
+    ok('PP-ENTER-ACTION Enter picks the exact name or the highlighted match, adds an unknown name, and never adds a name that matches people',
+      JSON.stringify(PeoplePicker.enterAction(P, [], 'bob', 0)) === JSON.stringify({ kind: 'pick', name: 'Bob Ng' })
+      && JSON.stringify(PeoplePicker.enterAction(P, [], 'a', 1)) === JSON.stringify({ kind: 'pick', name: 'Dan Abel' })
+      && JSON.stringify(PeoplePicker.enterAction(P, [], 'dan abel', 3)) === JSON.stringify({ kind: 'pick', name: 'Dan Abel' })
+      && JSON.stringify(PeoplePicker.enterAction(P, [], 'Zoe Q', 0)) === JSON.stringify({ kind: 'add', name: 'Zoe Q' })
+      && JSON.stringify(PeoplePicker.enterAction(P, ['Bob Ng'], 'bob ng', 0)) === JSON.stringify({ kind: 'clear' })
+      && PeoplePicker.enterAction(P, [], '', 0).kind === 'none' && PeoplePicker.enterAction(P, [], 'a/b', 0).kind === 'none');
+  }
+  {
+    const e = env({ people: ['Ada Lovelace', 'Bob Ng', 'Cy Park', 'Dan Abel'] });
+    const calls = [];
+    e.ec.create = async (args) => { calls.push(args); };
+    openDialog(e);
+    const m = modalOf(e.doc);
+    const search = one(m, 'sauce-people-picker-search');
+    const chipNames = () => byClass(m, 'sauce-people-picker-chip').map((c) => c.children[0].textContent);
+    const listed = () => byClass(m, 'sauce-people-picker-name').map((n) => n.textContent);
+    const activeName = () => { const r = byClass(m, 'sauce-people-picker-row').find((x) => has(x, 'is-active')); return r ? r.textContent : null; };
+    search.focus();
+    typeInto(search, 'bo');
+    e.doc.activeElement = e.doc.body;
+    e.doc.key(search, 'Enter');
+    await settle();
+    const one1 = { chips: chipNames(), value: search.value, focus: e.doc.activeElement === search, listed: listed() };
+    typeInto(search, 'a');
+    const topA = activeName();
+    e.doc.key(search, 'ArrowDown');
+    const downA = activeName();
+    e.doc.key(search, 'Enter');
+    await settle();
+    const two = { chips: chipNames(), focus: e.doc.activeElement === search };
+    typeInto(search, 'Zoe Quinn');
+    e.doc.key(search, 'Enter');
+    e.doc.activeElement = e.doc.body;
+    await settle();
+    const made = e.created.find((c) => c.path === 'spice/people/Zoe Quinn.md');
+    const three = { chips: chipNames(), value: search.value, focus: e.doc.activeElement === search };
+    e.doc.key(search, 'Backspace');
+    const afterBack = chipNames();
+    e.doc.key(search, 'ArrowDown');
+    e.doc.key(search, 'Enter');
+    await settle();
+    const arrowPick = chipNames();
+    ok('MCD-KEYS-ONE-MATCH typing to one match and Enter adds them, clears the search and keeps focus there; they leave the list',
+      JSON.stringify(one1.chips) === JSON.stringify(['Bob Ng']) && one1.value === '' && one1.focus
+      && one1.listed.indexOf('Bob Ng') < 0 && one1.listed.length === 3, JSON.stringify(one1));
+    ok('MCD-KEYS-HIGHLIGHT several matches: the best is highlighted, ↓ moves it, Enter adds the highlighted one (no new person)',
+      topA === 'Ada Lovelace' && downA === 'Dan Abel' && JSON.stringify(two.chips) === JSON.stringify(['Bob Ng', 'Dan Abel'])
+      && two.focus && !e.created.some((c) => c.path === 'spice/people/a.md'), JSON.stringify([topA, downA, two]));
+    ok('MCD-KEYS-NEW-PERSON Enter on a name nobody has creates the person, adds them and keeps focus for the next name',
+      !!made && JSON.stringify(three.chips) === JSON.stringify(['Bob Ng', 'Dan Abel', 'Zoe Quinn']) && three.value === '' && three.focus,
+      JSON.stringify(three));
+    ok('MCD-KEYS-BACKSPACE Backspace in an empty search removes the last person; ↓ then Enter on an empty search picks the highlighted row',
+      JSON.stringify(afterBack) === JSON.stringify(['Bob Ng', 'Dan Abel'])
+      && JSON.stringify(arrowPick) === JSON.stringify(['Bob Ng', 'Dan Abel', 'Cy Park']),
+      JSON.stringify([afterBack, arrowPick]));
+    ok('MCD-KEYS-NO-SUBMIT none of those keys created the meeting, and rows and ✕ keep focus on press',
+      calls.length === 0 && !!modalOf(e.doc)
+      && byClass(m, 'sauce-people-picker-row').every((r) => (r._listeners.mousedown || []).length === 1)
+      && byClass(m, 'sauce-task-chip-x').every((x) => (x._listeners.mousedown || []).length === 1));
+  }
+
   // ── Add a person; refuse a path-hostile name ──────────────────────────────
   {
     const e = env();

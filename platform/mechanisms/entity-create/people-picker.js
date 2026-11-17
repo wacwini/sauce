@@ -4,9 +4,14 @@
  * Every place that picks people for a note uses this: the New meeting
  * dialog, Edit attendees on a meeting, and EntityCreate's `people-multi`
  * prompt. It renders into any host: a chip row of the people picked so
- * far, a search field, a scrolling list of people under spice/people/
- * (the People hub excluded) and a "＋ Add new person" button that creates
- * a person stub for a name nobody has yet.
+ * far, a search field, a scrolling list of the people under spice/people/
+ * not picked yet (the People hub excluded) and a "＋ Add new person" button
+ * that creates a person stub for a name nobody has yet.
+ *
+ * It is built to be used from the keyboard: the best match is highlighted
+ * (↑/↓ move it), Enter picks it, or adds the typed name when nobody
+ * matches, Backspace in an empty search removes the last person, and focus
+ * stays in the search after every pick so the next name can be typed.
  *
  * Names are trimmed and their inner whitespace collapsed. A name that
  * cannot be a note filename (/ \ : * ? " < > | # ^ [ ], or a leading dot)
@@ -28,6 +33,7 @@ class PeoplePicker {
     listPeople(app) { return PeoplePicker.listPeople(app); }
     stubBody(name, iso) { return PeoplePicker.stubBody(name, iso); }
     rows(people, selected, query) { return PeoplePicker.rows(people, selected, query); }
+    enterAction(people, selected, query, active) { return PeoplePicker.enterAction(people, selected, query, active); }
     addState(people, query) { return PeoplePicker.addState(people, query); }
     createStub(app, name, now) { return PeoplePicker.createStub(app, name, now); }
     mount(host, opts) { return PeoplePicker.mount(host, opts); }
@@ -69,19 +75,50 @@ class PeoplePicker {
     }
 
     /**
-     * The list rows: everyone in `people` plus anyone already selected, sorted,
-     * narrowed to names containing every word of `query` (selected people
-     * always stay listed so they can be unticked).
-     *   → [{ name, selected }]
+     * The list rows: the people in `people` not yet selected (the picked ones
+     * are the chips), narrowed to names containing every word of `query`.
+     * Best match first: the exact name, then names with a word starting with
+     * the query, then the rest, each alphabetical.
+     *   → [{ name, selected: false }]
      */
     static rows(people, selected, query) {
         const sel = selected instanceof Set ? selected : new Set(selected || []);
-        const all = Array.from(new Set([].concat(people || [], Array.from(sel)))).filter(Boolean)
-            .sort((a, b) => a.localeCompare(b));
-        const words = String(query == null ? '' : query).toLowerCase().split(/\s+/).filter(Boolean);
-        return all
-            .filter((n) => sel.has(n) || words.every((w) => n.toLowerCase().indexOf(w) >= 0))
-            .map((n) => ({ name: n, selected: sel.has(n) }));
+        const q = String(query == null ? '' : query).replace(/\s+/g, ' ').trim().toLowerCase();
+        const words = q.split(' ').filter(Boolean);
+        const rank = (n) => {
+            const lc = n.toLowerCase();
+            if (!q) return 2;
+            if (lc === q) return 0;
+            if (lc.indexOf(q) === 0 || lc.split(/\s+/).some((w) => w.indexOf(words[0]) === 0)) return 1;
+            return 2;
+        };
+        return Array.from(new Set(people || [])).filter((n) => n && !sel.has(n))
+            .filter((n) => words.every((w) => n.toLowerCase().indexOf(w) >= 0))
+            .map((n) => ({ n, r: rank(n) }))
+            .sort((a, b) => (a.r - b.r) || a.n.localeCompare(b.n))
+            .map((x) => ({ name: x.n, selected: false }));
+    }
+
+    /**
+     * What Enter in the search does, given the highlighted row `active`:
+     *   { kind: 'pick', name }  — the exact name, else the highlighted match
+     *   { kind: 'add', name }   — nobody matches: create this person
+     *   { kind: 'clear' }       — the name is already picked: just clear the search
+     *   { kind: 'none' }        — empty or a name that cannot be a person
+     */
+    static enterAction(people, selected, query, active) {
+        const sel = selected instanceof Set ? selected : new Set(selected || []);
+        const q = PeoplePicker.cleanName(query).toLowerCase();
+        if (!q) return { kind: 'none' };
+        const exact = (people || []).find((n) => String(n).toLowerCase() === q);
+        if (exact) return sel.has(exact) ? { kind: 'clear' } : { kind: 'pick', name: exact };
+        const rows = PeoplePicker.rows(people, sel, query);
+        if (rows.length) {
+            const i = Number.isInteger(active) && active >= 0 && active < rows.length ? active : 0;
+            return { kind: 'pick', name: rows[i].name };
+        }
+        const st = PeoplePicker.addState(people, query);
+        return st.canAdd ? { kind: 'add', name: st.name } : { kind: 'none' };
     }
 
     /**
@@ -154,14 +191,33 @@ class PeoplePicker {
         try { input.setAttribute('autocomplete', 'off'); } catch (_e) {}
         input.style.cssText = fieldCss;
         const list = root.createDiv({ cls: 'sauce-task-picker-results sauce-people-picker-list' });
-        try { list.setAttribute('role', 'listbox'); list.setAttribute('aria-multiselectable', 'true'); } catch (_e) {}
+        try { list.setAttribute('role', 'listbox'); } catch (_e) {}
         const addBtn = root.createEl('button', { cls: 'sauce-task-quiet sauce-people-picker-add', text: '＋ Add new person' });
         try { addBtn.setAttribute('type', 'button'); } catch (_e) {}
         const note = root.createDiv({ cls: 'sauce-task-caption sauce-people-picker-note' });
 
         let chain = Promise.resolve();
+        // The highlighted row (Enter picks it, ↑/↓ move it); back to the top
+        // whenever the search changes.
+        let active = 0;
+        let navigated = false;
         const names = () => Array.from(selected);
         const changed = () => { if (typeof o.onChange === 'function') { try { o.onChange(names()); } catch (_e) {} } };
+        const refocus = () => { try { if (input.isConnected !== false) input.focus(); } catch (_e) {} };
+        // A press on a chip's ✕ or a row would move focus off the search;
+        // keep it there so the next name can be typed straight away.
+        const keepFocus = (el) => {
+            try { el.addEventListener('mousedown', (ev) => { if (ev && ev.preventDefault) ev.preventDefault(); }); } catch (_e) {}
+        };
+        const pick = (name) => {
+            selected.add(name);
+            input.value = '';
+            active = 0;
+            navigated = false;
+            redraw();
+            changed();
+            refocus();
+        };
 
         const renderChips = () => {
             chips.empty();
@@ -170,28 +226,32 @@ class PeoplePicker {
                 chip.createSpan({ text: name });
                 const x = chip.createEl('button', { cls: 'sauce-task-chip-x', text: '✕' });
                 try { x.setAttribute('type', 'button'); x.setAttribute('aria-label', 'Remove ' + name); } catch (_e) {}
-                x.onclick = () => { selected.delete(name); redraw(); changed(); };
+                keepFocus(x);
+                x.onclick = () => { selected.delete(name); redraw(); changed(); refocus(); };
             }
             chips.style.display = selected.size ? '' : 'none';
         };
         const renderList = () => {
             list.empty();
             const rows = PeoplePicker.rows(people, selected, input.value);
+            if (active >= rows.length) active = Math.max(0, rows.length - 1);
             if (!rows.length) {
-                list.createDiv({ cls: 'sauce-task-picker-empty', text: people.length ? 'No one matches' : 'No people yet' });
+                const st = PeoplePicker.addState(people, input.value);
+                const text = st.canAdd ? 'No one matches. Press Enter to add “' + st.name + '”'
+                    : (String(input.value || '').trim() ? (st.reason === 'exists' ? 'Already added' : 'No one matches')
+                        : (people.length ? 'Everyone is added' : 'No people yet'));
+                list.createDiv({ cls: 'sauce-task-picker-empty', text });
                 return;
             }
-            for (const r of rows) {
-                const row = list.createDiv({ cls: 'sauce-task-picker-row sauce-people-picker-row' + (r.selected ? ' is-selected' : '') });
-                try { row.setAttribute('role', 'option'); row.setAttribute('aria-selected', r.selected ? 'true' : 'false'); } catch (_e) {}
-                row.createSpan({ cls: 'sauce-people-picker-check', text: r.selected ? '✓' : '' });
+            rows.forEach((r, i) => {
+                const on = i === active;
+                const row = list.createDiv({ cls: 'sauce-task-picker-row sauce-people-picker-row' + (on ? ' is-active' : '') });
+                try { row.setAttribute('role', 'option'); row.setAttribute('aria-selected', on ? 'true' : 'false'); } catch (_e) {}
                 row.createSpan({ cls: 'sauce-people-picker-name', text: r.name });
-                row.onclick = () => {
-                    if (selected.has(r.name)) selected.delete(r.name); else selected.add(r.name);
-                    redraw();
-                    changed();
-                };
-            }
+                keepFocus(row);
+                row.onclick = () => pick(r.name);
+                if (on && typeof row.scrollIntoView === 'function') { try { row.scrollIntoView({ block: 'nearest' }); } catch (_e) {} }
+            });
         };
         const refreshAdd = () => {
             const st = PeoplePicker.addState(people, input.value);
@@ -219,8 +279,10 @@ class PeoplePicker {
                     if (people.indexOf(name) < 0) { people.push(name); people.sort((a, b) => a.localeCompare(b)); }
                     selected.add(name);
                     if (PeoplePicker.cleanName(input.value).toLowerCase() === name.toLowerCase()) input.value = '';
+                    active = 0;
                     redraw();
                     changed();
+                    refocus();
                 }
                 return ok === true;
             };
@@ -229,26 +291,47 @@ class PeoplePicker {
             return result;
         };
 
-        input.oninput = () => { renderList(); refreshAdd(); };
-        // Enter picks the person the search narrows to (an exact name, or the
-        // only match); otherwise it adds the typed name as a new person. It
-        // never submits the dialog around the picker.
+        input.oninput = () => { active = 0; navigated = false; renderList(); refreshAdd(); };
+        // Keyboard: ↑/↓ move the highlight; Enter picks the exact name or the
+        // highlighted match, or adds the typed name when nobody matches, and
+        // never submits the dialog around the picker; Backspace in an empty
+        // search removes the last person picked. Focus stays in the search.
         input.addEventListener('keydown', (ev) => {
-            if (!ev || ev.key !== 'Enter' || ev.isComposing || ev.metaKey || ev.ctrlKey) return;
-            if (ev.preventDefault) ev.preventDefault();
-            if (ev.stopPropagation) ev.stopPropagation();
-            const q = PeoplePicker.cleanName(input.value).toLowerCase();
-            const hits = q ? PeoplePicker.rows(people, new Set(), input.value) : [];
-            const target = hits.find((h) => h.name.toLowerCase() === q) || (hits.length === 1 ? hits[0] : null);
-            if (target) {
-                selected.add(target.name);
-                input.value = '';
+            if (!ev || ev.isComposing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+            if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+                const n = PeoplePicker.rows(people, selected, input.value).length;
+                if (!n) return;
+                if (ev.preventDefault) ev.preventDefault();
+                active = ev.key === 'ArrowDown' ? (active + 1) % n : (active - 1 + n) % n;
+                navigated = true;
+                renderList();
+                return;
+            }
+            if (ev.key === 'Backspace') {
+                if (input.value || !selected.size) return;
+                if (ev.preventDefault) ev.preventDefault();
+                const last = Array.from(selected).pop();
+                selected.delete(last);
                 redraw();
                 changed();
                 return;
             }
-            add();
+            if (ev.key !== 'Enter') return;
+            if (ev.preventDefault) ev.preventDefault();
+            if (ev.stopPropagation) ev.stopPropagation();
+            if (!String(input.value || '').trim()) {
+                // An empty search picks only a row the arrows moved to.
+                const rows = navigated ? PeoplePicker.rows(people, selected, '') : [];
+                if (rows[active]) pick(rows[active].name);
+                return;
+            }
+            const act = PeoplePicker.enterAction(people, selected, input.value, active);
+            if (act.kind === 'pick') { pick(act.name); return; }
+            if (act.kind === 'clear') { input.value = ''; active = 0; redraw(); refocus(); return; }
+            if (act.kind === 'add') { add(); return; }
+            refreshAdd();
         });
+        keepFocus(addBtn);
         addBtn.onclick = () => add();
 
         const api = {
@@ -290,8 +373,7 @@ class PeoplePicker {
             '.sauce-people-picker-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
             '.sauce-people-picker-list.sauce-task-picker-results { margin-top: 0; max-height: 200px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }',
             '.sauce-people-picker-row { display: flex; align-items: center; gap: 8px; min-width: 0; }',
-            '.sauce-people-picker-row.is-selected { font-weight: 600; }',
-            '.sauce-people-picker-check { flex: 0 0 14px; color: var(--interactive-accent); }',
+            '.sauce-people-picker-row.is-active { background: var(--background-modifier-hover); color: var(--text-normal); }',
             '.sauce-people-picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
             'button.sauce-people-picker-add { align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
             '.sauce-people-picker-note { margin-top: 0; color: var(--text-error); }',
