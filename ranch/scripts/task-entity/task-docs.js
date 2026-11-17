@@ -485,7 +485,8 @@ class TaskDocs {
      * field saves through `save(newTitle)` when the name changed, Escape
      * cancels. Clicks in the field never reach the row under it.
      */
-    static _editTitle(host, textEl, current, save) {
+    static _editTitle(host, textEl, current, save, opts) {
+        const o = opts || {};
         const input = host.createEl('input', { cls: 'sauce-tdv-rename-input', type: 'text' });
         input.value = current;
         try { input.setAttribute('aria-label', 'Note name'); input.setAttribute('enterkeyhint', 'done'); } catch (_e) {}
@@ -499,18 +500,70 @@ class TaskDocs {
             try { if (input.remove) input.remove(); else if (host.removeChild) host.removeChild(input); } catch (_e) {}
             textEl.style.display = '';
             host.classList.remove('is-renaming');
+            try { if (typeof o.onEnd === 'function') o.onEnd(commit); } catch (_e) {}
             if (commit && v && v !== current) await save(v);
         };
         const stop = (ev) => { try { ev.stopPropagation(); } catch (_e) {} };
         input.addEventListener('click', stop);
         input.addEventListener('mousedown', stop);
         input.addEventListener('keydown', (ev) => {
+            if (ev.isComposing) return;
             if (ev.key === 'Enter') { try { ev.preventDefault(); } catch (_e) {} finish(true); }
             else if (ev.key === 'Escape') { try { ev.preventDefault(); } catch (_e) {} finish(false); }
         });
-        input.addEventListener('blur', () => { finish(true); });
-        try { input.focus(); input.select(); } catch (_e) {}
+        // A Dataview refresh can swap the card for a fresh copy while the
+        // field is open (RenderSafe's refresh gate carries the typed text and
+        // focus onto the copy's field). The old field then leaves the page;
+        // if that blurs it, it must not save: the copy's field owns the name.
+        input.addEventListener('blur', () => {
+            const settle = () => { if (input.isConnected === false) return; finish(true); };
+            if (typeof setTimeout === 'function') setTimeout(settle, 0); else settle();
+        });
+        TaskDocs._focusWhenLive(input);
         return { input, finish };
+    }
+
+    /**
+     * Focus and select `input` now, or, while it is still being drawn off
+     * screen (a RenderSafe refresh scratch, or not yet on the page), as soon
+     * as it is on screen, for up to 3s. Never takes focus from another field
+     * the person moved to.
+     */
+    static _focusWhenLive(input) {
+        const live = () => input.isConnected !== false
+            && !(typeof input.closest === 'function' && input.closest('[data-sauce-refresh-scratch]'));
+        const free = () => {
+            try {
+                const a = typeof document !== 'undefined' ? document.activeElement : null;
+                return !a || a === input || a === document.body || a.isConnected === false;
+            } catch (_e) { return true; }
+        };
+        const focus = () => { try { input.focus(); input.select(); } catch (_e) {} };
+        if (typeof document === 'undefined' || live()) { focus(); return; }
+        if (typeof setTimeout !== 'function') return;
+        let tries = 0;
+        const poll = () => {
+            if (live()) { if (free() && document.activeElement !== input) focus(); return; }
+            if (++tries < 30) setTimeout(poll, 100);
+        };
+        setTimeout(poll, 100);
+    }
+
+    /**
+     * Notes made with + Note that are waiting for their name, by path. Every
+     * draw of the task card opens the name field on them until it closes
+     * (Enter, Escape or leaving it), so a Dataview refresh that redraws the
+     * card keeps the field. An entry lapses after a minute.
+     */
+    static _naming() { return TaskDocs.__naming || (TaskDocs.__naming = new Map()); }
+    static _startNaming(path) { TaskDocs._naming().set(String(path), Date.now() + 60000); }
+    static _stopNaming(path) { TaskDocs._naming().delete(String(path)); }
+    static _isNaming(path) {
+        const m = TaskDocs._naming();
+        const until = m.get(String(path));
+        if (!until) return false;
+        if (until < Date.now()) { m.delete(String(path)); return false; }
+        return true;
     }
 
     // ----- Converting note-like subtasks -----
@@ -2306,7 +2359,7 @@ class TaskDocs {
                                 if (!TaskDocs.isNew(d.mtime, seenAt[d.path], now) && res.value && res.value.path) TaskDocs.markSeen(res.value.path);
                                 paint();
                             }
-                        });
+                        }, { onEnd: () => { TaskDocs._stopNaming(d.path); } });
                     };
                     renamers.set(d.path, startRename);
                     ren.addEventListener('click', (ev) => {
@@ -2344,6 +2397,13 @@ class TaskDocs {
                         try { o.decorateRow(row, d, paint); } catch (_e) { /* the row still works */ }
                     }
                 }
+                // A note made with + Note keeps its name field open across
+                // redraws (a Dataview refresh included) until it closes.
+                for (const d of docs) {
+                    if (!TaskDocs._isNaming(d.path)) continue;
+                    const start = renamers.get(d.path);
+                    if (start) { try { start(); } catch (_e) {} }
+                }
             };
             paint();
             const hint = section.createEl('div', { cls: 'sauce-tnv-notes-hint' });
@@ -2369,11 +2429,10 @@ class TaskDocs {
                     const res = await TaskDocs.create(app, taskPath, kind, TaskDocs._kind(kind).label);
                     if (!res.ok) { TaskDocs._notice('Could not create the note: ' + res.reason, 6000); return; }
                     TaskDocs.markSeen(res.path);
+                    TaskDocs._startNaming(res.path);
                     await TaskDocs._cached(app, res.path, 1500);
                     paint();
-                    const name = renamers.get(res.path);
-                    if (name) name();
-                    else open(res.path);
+                    if (!renamers.has(res.path)) { TaskDocs._stopNaming(res.path); open(res.path); }
                 };
                 const entries = TaskDocs.KINDS.map((k) => ({ label: k.label, icon: k.icon, onSelect: () => { make(k.key); } }));
                 if (MP && typeof MP.open === 'function') MP.open(entries, { anchor: add, title: 'New note', animate: true });

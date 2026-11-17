@@ -637,6 +637,36 @@ ok('TD-FOLDER a folder task keeps its notes in <Task>/notes; a flat task has non
     await keepIn._l.keydown(key('Escape'));
     ok('TD-NEW-NAME-ESCAPE Escape keeps the default name and leaves you on the task',
       made2.length === 1 && rApp._files.has(made2[0]) && by(sec4, 'sauce-tdv-rename-input').length === 0 && rApp._opened.length === opensBefore, JSON.stringify(made2));
+
+    const refreshBefore = new Set(rApp._files.keys());
+    const oldIn = await addNote('Context');
+    const ctxPath = Array.from(rApp._files.keys()).find((k) => !refreshBefore.has(k));
+    const fresh = TD.render(mk('div'), { app: rApp, taskPath: `${R}/Redis.md` });
+    const freshIn = by(fresh, 'sauce-tdv-rename-input')[0];
+    ok('TD-NEW-NAME-REFRESH a redraw of the task card (a Dataview refresh) while the new note waits for its name draws the name field again, with the same name and key, so RenderSafe can carry the typed text onto it',
+      oldIn && freshIn && freshIn.value === 'Context' && freshIn._attrs['aria-label'] === oldIn._attrs['aria-label'] && freshIn.className === oldIn.className
+      && by(fresh, 'sauce-tdv-rename-input').length === 1, JSON.stringify({ ctxPath, v: freshIn && freshIn.value }));
+    oldIn.remove(); oldIn.isConnected = false;
+    oldIn.value = 'Typed before the swap';
+    oldIn._l.blur();
+    await tick(); await tick();
+    ok('TD-NEW-NAME-SWAP-BLUR the old field leaving the page does not save its name: the redrawn field owns it',
+      rApp._files.has(ctxPath) && by(fresh, 'sauce-tdv-rename-input').length === 1);
+    freshIn.value = 'Redis context';
+    await freshIn._l.keydown(key('Enter'));
+    await tick();
+    const later = TD.render(mk('div'), { app: rApp, taskPath: `${R}/Redis.md` });
+    ok('TD-NEW-NAME-REFRESH-ENTER Enter in the redrawn field names the note, and later redraws no longer open the field',
+      rApp._files.has(`${R}/notes/Redis context.md`) && !rApp._files.has(ctxPath) && by(later, 'sauce-tdv-rename-input').length === 0
+      && rApp._opened.length === opensBefore, JSON.stringify(Array.from(rApp._files.keys()).filter((k) => k.includes('/notes/'))));
+    const escIn = await addNote('Questions');
+    await escIn._l.keydown(key('Escape'));
+    const afterEsc = TD.render(mk('div'), { app: rApp, taskPath: `${R}/Redis.md` });
+    const composing = TD._editTitle(mk('div'), mk('span'), 'A', async () => { throw new Error('should not save'); });
+    await composing.input._l.keydown({ key: 'Enter', isComposing: true, preventDefault() {} });
+    ok('TD-NEW-NAME-ESCAPE-CLEARS Escape ends the wait, so a redraw shows the plain row; Enter while an IME is composing does not submit',
+      by(afterEsc, 'sauce-tdv-rename-input').length === 0 && by(afterEsc, 'sauce-tnv-doc-title').map((n) => n.textContent).includes('Questions')
+      && composing.input.parentNode && composing.input.parentNode.children.includes(composing.input), JSON.stringify({ fields: by(afterEsc, 'sauce-tdv-rename-input').length, titles: by(afterEsc, 'sauce-tnv-doc-title').map((n) => n.textContent), escIn: !!escIn, comp: !!(composing.input.parentNode) }));
     win.customJS.MenuPopover = undefined;
 
     if (!hadDoc) delete globalThis.document;
