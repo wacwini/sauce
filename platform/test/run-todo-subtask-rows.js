@@ -287,13 +287,35 @@ process.exitCode = 1;
     assert.deepStrictEqual(titles(View.doneToday(done, TODAY, TE, TTL)), ['Sub done dated', 'Root done']);
   });
 
-  await okAsync('ST-VIEW-DAILY the daily view lists a root, hides an undated subtask, counts match the tabs and strip', async () => {
+  await okAsync('ST-VIEW-DAILY-HIDDEN by default the daily view lists no subtasks, dated or not, in its tabs, counts, strip or a picked day', async () => {
     const pages = [...ROOTS,
       sub('Undated sub', { due: null }),
       sub('Thursday sub', { due: THURSDAY }),
       sub('Today sub', { due: TODAY }),
       sub('Late sub', { due: '2026-11-05' })];
     const { root } = await mount(pages, 'daily');
+    assert.deepStrictEqual(tabLabels(root).slice(0, 5),
+      ['Today', 'This week', 'Overdue', 'Backlog · 1', 'All open']);
+    assert.deepStrictEqual(listTitles(root), ['Root today']);
+    assert.deepStrictEqual(stripCounts(root), ['1', '0', '0', '0', '0', '0', '0']);
+    const toggle = findButton(root, 'Subtasks');
+    assert(toggle && !/is-active/.test(toggle.className) && toggle.attributes['aria-pressed'] === 'false', 'the Subtasks toggle starts off');
+    await findButton(root, 'This week').fire('click');
+    assert.deepStrictEqual(listTitles(root), ['Root today']);
+    const thursday = byClass(root, 'sauce-todo-week-cell').find((c) => c.dataset.date === THURSDAY);
+    await thursday.fire('click');
+    assert.deepStrictEqual(listTitles(root), []);
+  });
+
+  await okAsync('ST-VIEW-DAILY with Subtasks on, the daily view lists a root and dated subtasks, hides an undated subtask, counts match the tabs and strip', async () => {
+    const pages = [...ROOTS,
+      sub('Undated sub', { due: null }),
+      sub('Thursday sub', { due: THURSDAY }),
+      sub('Today sub', { due: TODAY }),
+      sub('Late sub', { due: '2026-11-05' })];
+    const { root } = await mount(pages, 'daily');
+    await findButton(root, 'Subtasks').fire('click');
+    assert(/is-active/.test(findButton(root, 'Subtasks').className), 'the toggle shows it is on');
     assert.deepStrictEqual(tabLabels(root).slice(0, 5),
       ['Today', 'This week', 'Overdue · 1', 'Backlog · 1', 'All open']);
     assert.deepStrictEqual(listTitles(root).sort(), ['Root today', 'Today sub']);

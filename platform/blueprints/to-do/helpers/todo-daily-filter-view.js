@@ -42,9 +42,12 @@
  * repaints the view, focus goes back to that control (matched by data-nav).
  *
  * Subtasks never list as roots: they are out of All open, Backlog, No date,
- * the recurring surface and the recently-done lists, and show in Today /
- * This week / Overdue / a picked day only when their own due falls there (tab
- * and strip counts follow the same rule). A task counts as a subtask only
+ * the recurring surface and the recently-done lists. By default they are out
+ * of every list, count, strip day, month day and Done too, and live only on
+ * their parent's card. The Subtasks toggle (saved per surface as
+ * prefs.subtasks, default false) lets one show in Today / This week /
+ * Overdue / a picked day when its own due falls there (tab and strip counts
+ * follow the same rule). A task counts as a subtask only
  * while its parent is loaded and will show it on its card: an open task needs
  * an open parent. An open task whose parent is done, deleted or missing (a
  * promoted task) lists as a root, so nothing leaves the open lists.
@@ -134,7 +137,7 @@ class ToDoDailyFilterView {
                 labels: {},
                 strip: false, search: false, done: false, reorder: false, recurringOnly: false,
                 scoped: true,
-                tools: ['select'],
+                tools: ['subtasks', 'select'],
                 recentDone: { days: null, label: 'Done', limit: 5 },
                 emptyText: 'Nothing open from this meeting.',
             },
@@ -156,12 +159,24 @@ class ToDoDailyFilterView {
 
     static _normalizePrefs(value, surfaceKey) {
         const S = ToDoDailyFilterView.surface(surfaceKey);
-        const out = { ...S.defaults };
+        const out = { ...S.defaults, subtasks: false };
         if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
         if (S.tabs.includes(value.tab)) out.tab = value.tab;
         if (ToDoDailyFilterView.SORT_MODES.includes(value.sort)) out.sort = value.sort;
         if (ToDoDailyFilterView.GROUP_MODES.includes(value.group)) out.group = value.group;
+        if (value.subtasks === true) out.subtasks = true;
         return out;
+    }
+
+    /**
+     * `tasks` without the ones that live on a parent's card (isSubtask over
+     * `parents`), in input order. The view drops them everywhere (tabs, their
+     * counts, the strip, the month, Done) unless the Subtasks toggle is on.
+     */
+    static withoutSubtasks(tasks, parents) {
+        const list = Array.isArray(tasks) ? tasks : [];
+        const index = parents || ToDoDailyFilterView.parentIndex(list);
+        return list.filter((task) => task && !ToDoDailyFilterView.isSubtask(task, index));
     }
 
     static storage() {
@@ -1118,8 +1133,11 @@ class ToDoDailyFilterView {
                 searchTimer = setTimeout(() => { searchTimer = null; paint(); }, 120);
             });
         }
+        // Subtasks stay on their parent's card unless the Subtasks toggle is
+        // on; then one with its own due date also lists on that day's tabs.
+        const visible = () => (prefs.subtasks ? tasks : View.withoutSubtasks(tasks, parents()));
         const pool = () => {
-            let list = S.recurringOnly ? View.recurringOnly(tasks, parents()) : tasks;
+            let list = S.recurringOnly ? View.recurringOnly(tasks, parents()) : visible();
             if (query.trim()) list = View.searchTasks(list, query);
             return list;
         };
@@ -1162,7 +1180,7 @@ class ToDoDailyFilterView {
         // for this render only; the saved choice returns once TaskDocs loads.
         if (!tabKeys.includes(prefs.tab)) prefs = { ...prefs, tab: S.defaults.tab };
         const waitingItems = () => (TDocs ? TDocs.waiting(comms, loaded, todayStr) : []);
-        const tools = Array.isArray(S.tools) ? S.tools : ['sort', 'group', 'select'];
+        const tools = Array.isArray(S.tools) ? S.tools : ['subtasks', 'sort', 'group', 'select'];
         const tabButtons = {};
         const tabText = (key) => {
             if (!S.counted.includes(key)) return TAB_LABELS[key];
@@ -1208,6 +1226,11 @@ class ToDoDailyFilterView {
                 button.textContent = tabText(key);
                 setPill(button, active);
                 button.setAttribute('aria-selected', active ? 'true' : 'false');
+            }
+            if (subtasksButton) {
+                setPill(subtasksButton, !!prefs.subtasks);
+                subtasksButton.className += ' sauce-todo-subtasks-toggle';
+                subtasksButton.setAttribute('aria-pressed', prefs.subtasks ? 'true' : 'false');
             }
             if (sortButton) setPill(sortButton, prefs.sort !== S.defaults.sort);
             if (groupButton) setPill(groupButton, prefs.group !== S.defaults.group);
@@ -1580,7 +1603,7 @@ class ToDoDailyFilterView {
         // the All tab only: the first few, then "Show N more".
         const paintRecentDone = () => {
             const R = S.recentDone;
-            const done = View.doneRecent(tasks, todayStr, R.days, TE, TTL, parents());
+            const done = View.doneRecent(visible(), todayStr, R.days, TE, TTL, parents());
             if (!done.length) return;
             label(doneHost, `${R.label} · ${done.length}`);
             const limit = Number.isInteger(R.limit) && R.limit > 0 ? R.limit : done.length;
@@ -1609,7 +1632,7 @@ class ToDoDailyFilterView {
             if (!S.done) return;
             if (!state.day && prefs.tab !== 'today') return;
             const day = state.day || todayStr;
-            const done = View.doneToday(tasks, day, TE, TTL, parents());
+            const done = View.doneToday(visible(), day, TE, TTL, parents());
             if (!done.length) return;
             label(doneHost, `Done ${day === todayStr ? 'today' : View._dayLabel(day)} · ${done.length}`);
             for (const task of done) {
@@ -1697,7 +1720,7 @@ class ToDoDailyFilterView {
             clear(aboveTabs);
             if (!S.strip) return;
             const monday = shownMonday();
-            const cells = View.weekStrip(tasks, todayStr, TE, monday);
+            const cells = View.weekStrip(visible(), todayStr, TE, monday);
             if (!cells.length) return;
             const away = monday !== thisMonday();
             const weekName = away ? View._weekOfLabel(monday) : 'This week';
@@ -1778,7 +1801,7 @@ class ToDoDailyFilterView {
         // the strip to its week and leaves the calendar open on this month.
         const paintMonth = () => {
             const month = shownMonth();
-            const weeks = View.monthGrid(tasks, month, todayStr, TE);
+            const weeks = View.monthGrid(visible(), month, todayStr, TE);
             if (!weeks.length) return;
             const title = View._monthTitle(month);
             const box = aboveTabs.createEl('div', { cls: 'sauce-todo-month' });
@@ -1986,6 +2009,13 @@ class ToDoDailyFilterView {
                 if (prefs.tab === key) { if (wasDay) paint(); return; }
                 commit({ tab: key });
             }));
+        }
+        let subtasksButton = null;
+        if (tools.includes('subtasks')) {
+            subtasksButton = rightSide.createEl('button', { text: 'Subtasks', cls: 'sauce-todo-subtasks-toggle' });
+            subtasksButton.setAttribute('type', 'button');
+            subtasksButton.setAttribute('title', 'Also list subtasks on the day they are due');
+            subtasksButton.addEventListener('click', onClick(() => commit({ subtasks: !prefs.subtasks })));
         }
         let sortButton = null;
         if (tools.includes('sort')) {

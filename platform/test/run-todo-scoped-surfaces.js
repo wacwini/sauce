@@ -176,9 +176,9 @@ const doneTitles = (container) => byClass(container, 'sauce-today-done-title').m
   {
     const e = env({ project_slug: 'atlas' });
     await new TaskProjectList().render(e.dv);
-    ok('PRJ-PILLS project: All open / Overdue / This week / No date, counted, with Sort / Group / Select',
+    ok('PRJ-PILLS project: All open / Overdue / This week / No date, counted, with Subtasks / Sort / Group / Select',
       pills(e.container) === 'All open · 3|Overdue · 1|This week|No date'
-      && tools(e.container) === 'Sort ▾|Group ▾|Select');
+      && tools(e.container) === 'Subtasks|Sort ▾|Group ▾|Select');
     ok('PRJ-LIST only this project\'s open, non-meeting tasks, soonest due first, undated last',
       titles(e.container).join('|') === 'Atlas late spec|Atlas Friday demo|Atlas someday');
     ok('PRJ-NO-STRIP no week strip and no search on a project note',
@@ -216,8 +216,8 @@ const doneTitles = (container) => byClass(container, 'sauce-today-done-title').m
   {
     const e = env({ file: { name: 'Standup 2026-11-09' } });
     await new TaskMeetingList().render(e.dv);
-    ok('MTG-PILLS meeting: All open / Overdue, with Select only',
-      pills(e.container) === 'All open · 2|Overdue · 1' && tools(e.container) === 'Select');
+    ok('MTG-PILLS meeting: All open / Overdue, with Subtasks and Select',
+      pills(e.container) === 'All open · 2|Overdue · 1' && tools(e.container) === 'Subtasks|Select');
     ok('MTG-LIST only tasks whose source is this meeting',
       titles(e.container).join('|') === 'Standup follow-up|Standup note');
     ok('MTG-ROWS meeting rows keep the project chip (a meeting spans projects)',
