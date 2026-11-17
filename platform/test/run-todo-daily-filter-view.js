@@ -316,12 +316,12 @@ process.exitCode = 1;
   ok('RD-DV-PREFS written prefs survive any note date; legacy key ignored; corrupt JSON -> defaults', () => {
     const View = loadClass({});
     assert.strictEqual(View.PREFS_KEY, 'sauce-todo-filter:prefs:v2');
-    const defaults = { tab: 'today', sort: 'smart', group: 'none' };
+    const defaults = { tab: 'today', sort: 'smart', group: 'none', subtasks: false };
     const storage = makeStorage();
     assert.deepStrictEqual(View.readPrefs(storage), defaults);
 
     const written = View.writePrefs(storage, { tab: 'week', sort: 'due', group: 'project' });
-    assert.deepStrictEqual(written, { tab: 'week', sort: 'due', group: 'project' });
+    assert.deepStrictEqual(written, { tab: 'week', sort: 'due', group: 'project', subtasks: false });
     assert.deepStrictEqual(View.readPrefs(storage), written);
 
     const legacy = makeStorage({
@@ -346,15 +346,15 @@ process.exitCode = 1;
     const View = loadClass({});
     assert.deepStrictEqual(
       View._normalizePrefs({ tab: 'nonsense', sort: 'touched', group: 'priority' }),
-      { tab: 'today', sort: 'touched', group: 'priority' });
+      { tab: 'today', sort: 'touched', group: 'priority', subtasks: false });
     assert.deepStrictEqual(
       View._normalizePrefs({ tab: 'overdue', sort: 'sideways', group: 'project' }),
-      { tab: 'overdue', sort: 'smart', group: 'project' });
+      { tab: 'overdue', sort: 'smart', group: 'project', subtasks: false });
     assert.deepStrictEqual(
       View._normalizePrefs({ tab: 'backlog', sort: 'oldest', group: 'sideways', extra: 1 }),
-      { tab: 'backlog', sort: 'oldest', group: 'none' });
+      { tab: 'backlog', sort: 'oldest', group: 'none', subtasks: false });
     for (const bad of [null, undefined, 'x', 3, [], true]) {
-      assert.deepStrictEqual(View._normalizePrefs(bad), { tab: 'today', sort: 'smart', group: 'none' });
+      assert.deepStrictEqual(View._normalizePrefs(bad), { tab: 'today', sort: 'smart', group: 'none', subtasks: false });
     }
     for (const t of ['today', 'week', 'overdue', 'backlog', 'all']) {
       assert.strictEqual(View._normalizePrefs({ tab: t }).tab, t);
@@ -362,6 +362,9 @@ process.exitCode = 1;
     for (const m of ['smart', 'manual', 'priority', 'due', 'oldest', 'touched']) {
       assert.strictEqual(View._normalizePrefs({ sort: m }).sort, m);
     }
+    assert.strictEqual(View._normalizePrefs({}).subtasks, false, 'subtasks are hidden by default');
+    assert.strictEqual(View._normalizePrefs({ subtasks: true }).subtasks, true);
+    for (const v of ['true', 1, 'yes', null]) assert.strictEqual(View._normalizePrefs({ subtasks: v }).subtasks, false, String(v));
 
     const storage = makeStorage({
       [View.PREFS_KEY]: JSON.stringify({ tab: 'backlog', sort: 'priority', group: 'due', note: 'kept' }),
@@ -485,7 +488,7 @@ process.exitCode = 1;
     assert.strictEqual(byClass(root, 'sauce-todo-filter-controls').length, 1);
 
     assert.deepStrictEqual(buttonsOf(controlsOf(root)).map((b) => b.textContent),
-      ['Today', 'This week', 'Overdue · 2', 'Backlog · 1', 'All open', 'Sort ▾', 'Group ▾', 'Select']);
+      ['Today', 'This week', 'Overdue · 2', 'Backlog · 1', 'All open', 'Subtasks', 'Sort ▾', 'Group ▾', 'Select']);
     assert(String(findButton(root, 'Today').className).includes('is-active'));
     assert.strictEqual(findButton(root, 'Today').attributes['aria-selected'], 'true');
     assert.strictEqual(findButton(root, 'This week').attributes['aria-selected'], 'false');
@@ -527,7 +530,7 @@ process.exitCode = 1;
     assert.deepStrictEqual(listTitles(root), ['Friday item', 'Today high', 'Today low']);
     assert(String(findButton(root, 'This week').className).includes('is-active'));
     assert(!String(findButton(root, 'Today').className).includes('is-active'));
-    assert.deepStrictEqual(View.readPrefs(env.storage), { tab: 'week', sort: 'smart', group: 'none' });
+    assert.deepStrictEqual(View.readPrefs(env.storage), { tab: 'week', sort: 'smart', group: 'none', subtasks: false });
 
     await findButton(root, 'All open').fire('click');
     assert.strictEqual(listTitles(root).length, 8);
@@ -730,11 +733,11 @@ process.exitCode = 1;
     const Dashboard = new Function('window', 'customJS',
       `${fs.readFileSync(path.join(ROOT, 'platform/blueprints/daily/helpers/space-daily-dashboard.js'), 'utf8')}\nreturn SpaceDailyDashboard;`)(dashboardWindow, undefined);
     assert.strictEqual(Dashboard.writeTodayPrefs({ tab: 'overdue' }, storage), true);
-    assert.deepStrictEqual(View.readPrefs(storage), { tab: 'overdue', sort: 'due', group: 'priority' });
+    assert.deepStrictEqual(View.readPrefs(storage), { tab: 'overdue', sort: 'due', group: 'priority', subtasks: false });
     assert.strictEqual(JSON.parse(storage.data.get(View.PREFS_KEY)).note, 'kept');
 
     assert.strictEqual(Dashboard.writeTodayPrefs({ tab: 'backlog' }, storage), true);
-    assert.deepStrictEqual(View.readPrefs(storage), { tab: 'backlog', sort: 'due', group: 'priority' });
+    assert.deepStrictEqual(View.readPrefs(storage), { tab: 'backlog', sort: 'due', group: 'priority', subtasks: false });
     assert.strictEqual(JSON.parse(storage.data.get(View.PREFS_KEY)).note, 'kept');
     assert.deepStrictEqual(Dashboard.readTodayPrefs(storage), { tab: 'backlog', sort: 'due', group: 'priority' });
   });
