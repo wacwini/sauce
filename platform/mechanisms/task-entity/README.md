@@ -98,8 +98,10 @@ without being steps of it, so they are notes, not subtasks (`TaskDocs`,
 - **Card.** The task card's Notes section lists them in kind order, newest
   first; Copy prompt on prompt and handoff notes copies the prompt
   (`TaskDocs.extractPrompt`: a fenced block under a heading or callout titled
-  "prompt", else the first text fence, else the body); + Note creates one
-  and opens it, blank under its header (no starter text).
+  "prompt", else the first text fence, else the body); + Note creates one,
+  blank under its header (no starter text), and puts its name in a field
+  on its row instead of opening it: type a name and press Enter, or press
+  Escape to keep the default name. You stay on the task either way.
 - **Header.** Every note starts with `TaskDocs.HEADER`: the breadcrumb bar
   (`TaskChromeBar`, To-Do › task › note) and the header card
   (`TaskDocs.renderHeader`). The card is tinted in the kind's colour
