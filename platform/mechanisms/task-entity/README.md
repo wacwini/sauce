@@ -259,18 +259,22 @@ The day rhythm (`TaskDayPlan`, `task-day-plan.js`; spec:
   ("Pinned; couldn't clear N other pins"). A task that is not open is
   refused. Unpin removes it. Both go through `RenderSafe.mutate`.
 - **Now card.** Inside the Plan the day panel, drawn once (on Home and on
-  today's daily note): the title, the due chip, subtask progress, Copy
-  prompt (newest prompt note), Copy message (newest comms note with no
-  `sent_at`), Open and Unpin. A copy button shows only when there is a note
+  today's daily note): a quiet card with a small Now label and, at its right,
+  Unpin as the same small pressed pin button the task card carries; then the
+  title, one muted line with the due date and subtask progress, and small
+  Copy prompt (newest prompt note), Copy message (newest comms note with no
+  `sent_at`) and Open buttons. A copy button shows only when there is a note
   to copy from.
 - **Plan the day.** Open on Home, collapsed on today's daily note (never on
-  other days). When a task is pinned the head leads with an accent `Now:
-  <title>` chip (cut to 32 characters, the full title in its aria-label);
-  tapping it opens the task without opening or closing the panel, so the
-  collapsed daily panel still shows what is Now. Then come count chips in
-  this order: `N overdue` (hidden
-  at 0, in the warning tone), `N due today` (always), `N waiting` and
-  `N meeting(s)` (each hidden at 0). The body shows only what the Tasks list
+  other days). While the panel is collapsed and a task is pinned, the head
+  shows a `Now: <title>` chip (cut to 32 characters and to the space left,
+  the full title in its aria-label); tapping it opens the task without
+  opening or closing the panel. The open panel shows the Now card instead.
+  Then come the counts as one line of muted text joined by `·`, in this
+  order: `N overdue` (hidden at 0, a soft warning tone), `N due today`
+  (always), `N waiting` and `N meeting(s)` (each hidden at 0). Shut down is a
+  quiet button at the right (its label hidden on a phone). When the panel is
+  narrower than 520px the counts move to their own line under the title. The body shows only what the Tasks list
   below does not: the Now card, Waiting (`TaskDocs.waiting`; left out until
   that loads) and today's meetings (`SpaceDailyDashboard.selectMeetings`).
   It lists no tasks: the Overdue and Due today lists were removed on

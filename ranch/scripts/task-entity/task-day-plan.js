@@ -872,9 +872,21 @@ class TaskDayPlan {
             const today = String(o.today || model.today || '');
             const card = host.createEl('div', { cls: 'sauce-dp-now' });
             const top = card.createEl('div', { cls: 'sauce-dp-now-top' });
-            const label = top.createEl('span', { cls: 'sauce-dp-now-label' });
-            label.innerHTML = TaskDayPlan.ICON.pin;
-            label.createEl('span', { text: 'Now' });
+            top.createEl('span', { cls: 'sauce-dp-now-label', text: 'Now' });
+            // Unpin is the same small pin button the task card carries, pressed.
+            const unpin = top.createEl('button', { cls: 'sauce-dp-pin sauce-dp-unpin is-pinned' });
+            try {
+                unpin.setAttribute('type', 'button');
+                unpin.setAttribute('aria-pressed', 'true');
+                unpin.setAttribute('aria-label', 'Unpin');
+                unpin.setAttribute('title', 'Unpin');
+            } catch (_e) {}
+            unpin.innerHTML = TaskDayPlan.ICON.pin;
+            unpin.addEventListener('click', () => TaskDayPlan.togglePin(app, now.path, {
+                pinned: true,
+                optimistic: () => { try { card.classList.add('is-leaving'); } catch (_e) {} },
+                revert: () => { try { card.classList.remove('is-leaving'); } catch (_e) {} },
+            }));
             const title = card.createEl('a', { cls: 'sauce-dp-now-title', text: TaskDayPlan._str(now.title) || TaskDayPlan._base(now.path), href: '#' });
             title.addEventListener('click', (ev) => { try { ev.preventDefault(); } catch (_e) {} TaskDayPlan._open(app, now.path, ev); });
             const chips = card.createEl('div', { cls: 'sauce-dp-chips' });
@@ -906,12 +918,6 @@ class TaskDayPlan {
             if (notes.prompt) button('sauce-dp-copy-prompt', 'Copy prompt', TaskDayPlan.ICON.copy).addEventListener('click', copyFrom(notes.prompt, 'Prompt'));
             if (notes.message) button('sauce-dp-copy-message', 'Copy message', TaskDayPlan.ICON.copy).addEventListener('click', copyFrom(notes.message, 'Message'));
             button('sauce-dp-open', 'Open', TaskDayPlan.ICON.open).addEventListener('click', (ev) => TaskDayPlan._open(app, now.path, ev));
-            const unpin = button('sauce-dp-unpin', 'Unpin', TaskDayPlan.ICON.unpin);
-            unpin.addEventListener('click', () => TaskDayPlan.togglePin(app, now.path, {
-                pinned: true,
-                optimistic: () => { try { card.classList.add('is-leaving'); } catch (_e) {} },
-                revert: () => { try { card.classList.remove('is-leaving'); } catch (_e) {} },
-            }));
             return card;
         } catch (_e) {
             return null;
@@ -999,7 +1005,7 @@ class TaskDayPlan {
                 try { c.setAttribute('data-count', chip.key); } catch (_e) {}
             }
             const sd = head.createEl('button', { cls: 'sauce-dp-btn sauce-dp-shutdown' });
-            try { sd.setAttribute('type', 'button'); } catch (_e) {}
+            try { sd.setAttribute('type', 'button'); sd.setAttribute('title', 'Shut down the day'); sd.setAttribute('aria-label', 'Shut down the day'); } catch (_e) {}
             sd.innerHTML = TaskDayPlan.ICON.moon;
             sd.createEl('span', { text: 'Shut down' });
             sd.addEventListener('click', (ev) => {
@@ -1344,39 +1350,39 @@ class TaskDayPlan {
         return [
             '.sauce-day-plan { display: flex; flex-direction: column; gap: 10px; margin: 0 0 12px; }',
             '.space-daily-dashboard > .sauce-dp-plan { margin-bottom: 12px; }',
-            '.sauce-dp-now { --dp-accent: var(--interactive-accent); display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--dp-accent) 40%, var(--background-modifier-border)); border-radius: var(--radius-l, 12px); background: linear-gradient(135deg, color-mix(in srgb, var(--dp-accent) 12%, var(--background-secondary)) 0%, var(--background-secondary) 65%); }',
+            '.sauce-dp-now { --dp-accent: var(--interactive-accent); display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; border: 1px solid var(--background-modifier-border); border-left: 3px solid color-mix(in srgb, var(--dp-accent) 70%, transparent); border-radius: var(--radius-m, 8px); background: var(--background-primary); }',
             '.sauce-dp-now.is-leaving { opacity: 0.5; }',
-            '.sauce-dp-now-top { display: flex; align-items: center; gap: 8px; }',
-            '.sauce-dp-now-label { display: inline-flex; align-items: center; gap: 5px; color: var(--dp-accent); font-size: 0.72em; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }',
-            '.sauce-dp-now-title { color: var(--text-normal); font-size: 1.15em; font-weight: 700; line-height: 1.3; text-decoration: none; overflow-wrap: anywhere; cursor: pointer; }',
-            '.sauce-dp-chips { display: flex; flex-wrap: wrap; gap: 6px; }',
-            '.sauce-dp-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 1px 9px; border: 1px solid var(--background-modifier-border); border-radius: 999px; background: var(--background-primary); color: var(--text-muted); font-size: 0.76em; font-weight: 600; white-space: nowrap; }',
-            '.sauce-dp-chip.is-accent { color: var(--interactive-accent); border-color: color-mix(in srgb, var(--interactive-accent) 55%, transparent); }',
-            '.sauce-dp-chip.is-danger { color: var(--color-red, #dc2626); border-color: color-mix(in srgb, var(--color-red, #dc2626) 55%, transparent); }',
+            '.sauce-dp-now-top { display: flex; align-items: center; gap: 8px; min-height: 28px; }',
+            '.sauce-dp-now-label { color: var(--text-faint); font-size: 0.7em; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }',
+            'body .sauce-dp-now-top .sauce-dp-pin.sauce-dp-unpin { margin-left: auto; width: 28px; height: 28px; }',
+            '.sauce-dp-chip.is-danger { color: color-mix(in srgb, var(--color-orange, #ea580c) 70%, var(--text-muted)); }',
+            '.sauce-dp-now-title { color: var(--text-normal); font-size: 1.02em; font-weight: 600; line-height: 1.35; text-decoration: none; overflow-wrap: anywhere; cursor: pointer; }',
+            '.sauce-dp-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 0; color: var(--text-muted); font-size: 0.8em; }',
+            '.sauce-dp-chip { white-space: nowrap; }',
+            '.sauce-dp-chip + .sauce-dp-chip::before { content: "·"; margin: 0 6px; color: var(--text-faint); }',
             '.sauce-dp-chip.is-progress.is-complete { color: var(--color-green, #4c9a5a); }',
-            '.sauce-dp-actions { display: flex; flex-wrap: wrap; gap: 6px; }',
-            'body .sauce-dp-btn.sauce-dp-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: auto; min-height: 30px; padding: 0 11px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s, 6px); background: var(--background-primary); box-shadow: none; color: var(--text-normal); font-size: 0.82em; cursor: pointer; }',
-            '@media (hover: hover) { body .sauce-dp-btn.sauce-dp-btn:hover { border-color: var(--background-modifier-border-hover, var(--background-modifier-border)); background: var(--background-modifier-hover); } }',
-            'body .sauce-dp-btn.sauce-dp-copy-prompt, body .sauce-dp-btn.sauce-dp-copy-message { border-color: var(--dp-accent, var(--interactive-accent)); color: var(--dp-accent, var(--interactive-accent)); }',
-            '.sauce-dp-btn > svg { flex-shrink: 0; }',
-            '.sauce-dp-plan { border: 1px solid var(--background-modifier-border); border-left: 3px solid var(--color-yellow, #ca8a04); border-radius: var(--radius-m, 8px); background: color-mix(in srgb, var(--color-yellow, #ca8a04) 6%, var(--background-secondary)); }',
-            '.sauce-dp-plan-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 40px; padding: 6px 10px; list-style: none; cursor: pointer; }',
+            '.sauce-dp-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }',
+            'body .sauce-dp-btn.sauce-dp-btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: auto; min-height: 28px; padding: 0 10px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-s, 6px); background: transparent; box-shadow: none; color: var(--text-muted); font-size: 0.8em; cursor: pointer; }',
+            '@media (hover: hover) { body .sauce-dp-btn.sauce-dp-btn:hover { color: var(--text-normal); background: var(--background-modifier-hover); } }',
+            '.sauce-dp-btn > svg { flex-shrink: 0; width: 14px; height: 14px; }',
+            '.sauce-dp-plan { container: sauce-dp / inline-size; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m, 8px); background: var(--background-secondary); }',
+            '.sauce-dp-plan-head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; list-style: none; cursor: pointer; }',
             '.sauce-dp-plan-head::-webkit-details-marker { display: none; }',
             '.sauce-dp-plan-head::marker { content: ""; }',
             '.sauce-dp-plan-chevron { display: inline-flex; color: var(--text-faint); transition: transform 120ms ease; }',
             '.sauce-dp-plan[open] > .sauce-dp-plan-head .sauce-dp-plan-chevron { transform: rotate(90deg); }',
-            '.sauce-dp-plan-icon { display: inline-flex; color: var(--color-yellow, #ca8a04); }',
-            '.sauce-dp-plan-title { font-weight: 700; color: var(--text-normal); }',
-            '.sauce-dp-counts { display: inline-flex; flex-wrap: wrap; gap: 5px; flex: 1 1 auto; min-width: 0; }',
-            '.sauce-dp-count { padding: 0 8px; border-radius: 999px; font-size: 0.74em; font-weight: 600; line-height: 1.7; white-space: nowrap; background: var(--background-modifier-hover); color: var(--text-muted); }',
-            '.sauce-dp-count.is-overdue { color: var(--color-red, #dc2626); background: color-mix(in srgb, var(--color-red, #dc2626) 12%, transparent); }',
-            '.sauce-dp-count.is-today { color: var(--color-orange, #ea580c); background: color-mix(in srgb, var(--color-orange, #ea580c) 12%, transparent); }',
-            '.sauce-dp-count.is-today.is-zero { color: var(--text-muted); background: var(--background-modifier-hover); }',
-            'body .sauce-dp-now-chip.sauce-dp-now-chip { display: inline-flex; align-items: center; height: auto; min-height: 0; max-width: 100%; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--interactive-accent) 14%, transparent); box-shadow: none; color: var(--interactive-accent); font-size: 0.74em; font-weight: 700; line-height: 1.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }',
-            '@media (hover: hover) { body .sauce-dp-now-chip.sauce-dp-now-chip:hover { background: color-mix(in srgb, var(--interactive-accent) 24%, transparent); } }',
-            '.sauce-dp-count.is-meetings { color: var(--color-blue, #2563eb); background: color-mix(in srgb, var(--color-blue, #2563eb) 12%, transparent); }',
-            '.sauce-dp-count.is-waiting { color: var(--color-pink, #db2777); background: color-mix(in srgb, var(--color-pink, #db2777) 12%, transparent); }',
-            'body .sauce-dp-btn.sauce-dp-shutdown { margin-left: auto; }',
+            '.sauce-dp-plan-icon { display: inline-flex; color: color-mix(in srgb, var(--color-yellow, #ca8a04) 75%, var(--text-muted)); }',
+            '.sauce-dp-plan-title { flex-shrink: 0; font-weight: 600; color: var(--text-normal); }',
+            '.sauce-dp-counts { display: flex; flex-wrap: nowrap; align-items: center; flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text-muted); font-size: 0.8em; }',
+            '.sauce-dp-count { flex-shrink: 0; white-space: nowrap; }',
+            '@container sauce-dp (max-width: 520px) { .sauce-dp-plan-head { flex-wrap: wrap; row-gap: 2px; } .sauce-dp-counts { order: 10; flex-basis: 100%; padding-left: 46px; } }',
+            '.sauce-dp-count + .sauce-dp-count::before { content: "·"; margin: 0 6px; color: var(--text-faint); }',
+            '.sauce-dp-count.is-overdue { color: color-mix(in srgb, var(--color-orange, #ea580c) 70%, var(--text-muted)); }',
+            '.sauce-dp-count.is-today.is-zero { color: var(--text-faint); }',
+            'body .sauce-dp-now-chip.sauce-dp-now-chip { display: block; flex: 0 1 auto; height: auto; min-height: 0; min-width: 0; max-width: 100%; margin-right: 8px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--interactive-accent) 35%, transparent); border-radius: 999px; background: transparent; box-shadow: none; color: var(--interactive-accent); font-size: 1em; font-weight: 600; line-height: 1.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }',
+            '@media (hover: hover) { body .sauce-dp-now-chip.sauce-dp-now-chip:hover { background: color-mix(in srgb, var(--interactive-accent) 12%, transparent); } }',
+            '.sauce-dp-plan[open] > .sauce-dp-plan-head .sauce-dp-now-chip { display: none; }',
+            'body .sauce-dp-btn.sauce-dp-shutdown { flex-shrink: 0; margin-left: auto; border-color: transparent; }',
             '.sauce-dp-plan-body { display: flex; flex-direction: column; gap: 10px; padding: 2px 12px 12px; }',
             '.sauce-dp-group { display: flex; flex-direction: column; gap: 1px; }',
             '.sauce-dp-group-label, .sauce-dp-sd-label { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; color: var(--text-muted); font-size: 0.72em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }',
@@ -1405,9 +1411,10 @@ class TaskDayPlan {
             'body .sauce-dp-pin.sauce-dp-pin.is-pinned { color: var(--interactive-accent); border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent); background: color-mix(in srgb, var(--interactive-accent) 12%, transparent); }',
             'body.is-mobile .sauce-dp-btn.sauce-dp-btn, body.is-mobile .sauce-dp-sd-choice.sauce-dp-sd-choice, body.is-mobile .sauce-dp-row, body.is-mobile .sauce-dp-sd-date { min-height: 36px; }',
             'body.is-mobile .sauce-dp-pin.sauce-dp-pin { width: 36px; height: 36px; }',
-            'body.is-mobile .sauce-dp-now-chip.sauce-dp-now-chip { min-height: 36px; }',
-            'body.is-mobile .sauce-dp-actions > .sauce-dp-btn { flex: 1 1 auto; }',
-            '@media (max-width: 480px) { .sauce-dp-row-meta { max-width: 45%; } body .sauce-dp-btn.sauce-dp-shutdown { margin-left: 0; } }',
+            'body.is-mobile .sauce-dp-now-chip.sauce-dp-now-chip { min-height: 30px; }',
+            'body.is-mobile .sauce-dp-now-top .sauce-dp-pin.sauce-dp-unpin { width: 34px; height: 34px; }',
+            'body.is-mobile .sauce-dp-btn.sauce-dp-shutdown > span { display: none; }',
+            '@media (max-width: 480px) { .sauce-dp-row-meta { max-width: 45%; } body .sauce-dp-btn.sauce-dp-shutdown > span { display: none; } }',
         ].join('\n');
     }
 
