@@ -1770,6 +1770,23 @@ class TaskDocs {
         } catch (_e) { return null; }
     }
 
+    /**
+     * Resolves once Obsidian has read the frontmatter of the note at `path`
+     * (so a new note lists with its kind and title), or after `ms`.
+     */
+    static async _cached(app, path, ms) {
+        const has = () => {
+            try {
+                const f = app.vault.getAbstractFileByPath(path);
+                const c = f ? app.metadataCache.getFileCache(f) : null;
+                return !!(c && c.frontmatter);
+            } catch (_e) { return true; }
+        };
+        const until = Date.now() + (ms || 0);
+        while (!has() && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+        return has();
+    }
+
     /** The workspace leaf whose view holds `el`, or null. Never throws. */
     static _leafOf(app, el) {
         let found = null;
@@ -2230,8 +2247,10 @@ class TaskDocs {
             const open = (path) => {
                 try { app.workspace.openLinkText(path, taskPath, false); } catch (_e) {}
             };
+            const renamers = new Map();
             const paint = () => {
                 while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+                renamers.clear();
                 const docs = TaskDocs.list(app, taskPath);
                 countEl.textContent = docs.length ? String(docs.length) : '';
                 if (!docs.length) {
@@ -2266,8 +2285,7 @@ class TaskDocs {
                     const ren = row.createEl('button', { cls: 'sauce-tnv-doc-rename' });
                     try { ren.setAttribute('type', 'button'); ren.setAttribute('aria-label', 'Rename ' + d.title); ren.setAttribute('title', 'Rename'); } catch (_e) {}
                     ren.innerHTML = TaskDocs._ICONS.pencil;
-                    ren.addEventListener('click', (ev) => {
-                        try { ev.stopPropagation(); } catch (_e) {}
+                    const startRename = () => {
                         if (main.classList.contains && main.classList.contains('is-renaming')) return;
                         TaskDocs._editTitle(main, titleSpan, d.title, async (next) => {
                             const RenderSafe = window.customJS && window.customJS.RenderSafe;
@@ -2289,6 +2307,11 @@ class TaskDocs {
                                 paint();
                             }
                         });
+                    };
+                    renamers.set(d.path, startRename);
+                    ren.addEventListener('click', (ev) => {
+                        try { ev.stopPropagation(); } catch (_e) {}
+                        startRename();
                     });
                     TaskDocs._pathButton(row, 'sauce-tnv-doc-path', d.path, app);
                     const rowParent = row.parentNode;
@@ -2346,7 +2369,11 @@ class TaskDocs {
                     const res = await TaskDocs.create(app, taskPath, kind, TaskDocs._kind(kind).label);
                     if (!res.ok) { TaskDocs._notice('Could not create the note: ' + res.reason, 6000); return; }
                     TaskDocs.markSeen(res.path);
-                    open(res.path);
+                    await TaskDocs._cached(app, res.path, 1500);
+                    paint();
+                    const name = renamers.get(res.path);
+                    if (name) name();
+                    else open(res.path);
                 };
                 const entries = TaskDocs.KINDS.map((k) => ({ label: k.label, icon: k.icon, onSelect: () => { make(k.key); } }));
                 if (MP && typeof MP.open === 'function') MP.open(entries, { anchor: add, title: 'New note', animate: true });

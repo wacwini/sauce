@@ -607,6 +607,38 @@ ok('TD-FOLDER a folder task keeps its notes in <Task>/notes; a flat task has non
     ok('TD-TRASH-CSS the Delete button shows on hover on desktop, always on a phone, and hides while renaming',
       /\.sauce-tnv-doc:hover \.sauce-tnv-doc-trash/.test(TD._CSS) && /body\.is-mobile \.sauce-tnv-doc \.sauce-tnv-doc-trash \{ opacity: 1;/.test(TD._CSS)
       && /is-renaming \.sauce-tdv-trash \{ display: none; \}/.test(TD._CSS));
+
+    rApp.fileManager.processFrontMatter = async (f, fn) => { fn(f._fm); };
+    const menus = [];
+    win.customJS.MenuPopover = { open: (entries) => { menus.push(entries); return {}; } };
+    const sec4 = TD.render(mk('div'), { app: rApp, taskPath: `${R}/Redis.md` });
+    const opensBefore = rApp._opened.length;
+    const filesBefore = new Set(rApp._files.keys());
+    const addNote = async (label) => {
+      by(sec4, 'sauce-tnv-doc-add')[0]._l.click();
+      menus[menus.length - 1].find((e) => e.label === label).onSelect();
+      for (let i = 0; i < 40 && !by(sec4, 'sauce-tdv-rename-input').length; i++) await tick();
+      return by(sec4, 'sauce-tdv-rename-input')[0];
+    };
+    const nameIn = await addNote('Plan');
+    const made = Array.from(rApp._files.keys()).filter((k) => !filesBefore.has(k));
+    ok('TD-NEW-NAME + Note makes the note and puts its name in a field on its row, ready to type over, instead of opening it',
+      made.length === 1 && nameIn && nameIn.value === 'Plan' && rApp._opened.length === opensBefore
+      && by(sec4, 'sauce-tnv-doc').some((r) => by(r, 'sauce-tdv-rename-input').length === 1 && /is-plan/.test(r.className)), JSON.stringify({ made, v: nameIn && nameIn.value }));
+    nameIn.value = 'Rollout plan';
+    await nameIn._l.keydown(key('Enter'));
+    await tick();
+    ok('TD-NEW-NAME-ENTER Enter names it: the file is renamed, the list shows the name, and the note still does not open',
+      rApp._files.has(`${R}/notes/Rollout plan.md`) && !rApp._files.has(made[0]) && by(sec4, 'sauce-tdv-rename-input').length === 0
+      && by(sec4, 'sauce-tnv-doc-title').map((n) => n.textContent).includes('Rollout plan') && rApp._opened.length === opensBefore,
+      JSON.stringify(by(sec4, 'sauce-tnv-doc-title').map((n) => n.textContent)));
+    const keepIn = await addNote('Findings');
+    const made2 = Array.from(rApp._files.keys()).filter((k) => !filesBefore.has(k) && k !== `${R}/notes/Rollout plan.md`);
+    await keepIn._l.keydown(key('Escape'));
+    ok('TD-NEW-NAME-ESCAPE Escape keeps the default name and leaves you on the task',
+      made2.length === 1 && rApp._files.has(made2[0]) && by(sec4, 'sauce-tdv-rename-input').length === 0 && rApp._opened.length === opensBefore, JSON.stringify(made2));
+    win.customJS.MenuPopover = undefined;
+
     if (!hadDoc) delete globalThis.document;
     win.customJS.SauceModal = undefined;
   }
