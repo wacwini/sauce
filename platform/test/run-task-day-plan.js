@@ -334,6 +334,17 @@ function setup(opts) {
     ok('DP-PIN-5 toggling a pinned task unpins it', res2.ok === true && !('pinned_at' in fm('spice/tasks/Call bank/Call bank.md')) && DP.build({ today: TODAY }).now === null);
   }
   {
+    const { DP, app } = setup();
+    const host = el('div');
+    DP.renderDay(host, { today: TODAY, surface: 'home', open: true });
+    const card = host.one('sauce-dp-now');
+    await card.one('sauce-dp-unpin').fire('click');
+    await new Promise((r) => setTimeout(r, 0));
+    ok('DP-UNPIN-ICON the Now card\'s pin icon unpins the task and dims the card',
+      !('pinned_at' in app._byPath.get('spice/tasks/Ship routes/Ship routes.md').fm)
+      && /\bis-leaving\b/.test(card.className), card.className);
+  }
+  {
     const { DP, app, notices } = setup({ app: { pinFails: true } });
     let reverted = false;
     const res = await DP.togglePin(app, 'spice/tasks/Ship routes/Deploy/Deploy.md', { optimistic() {}, revert() { reverted = true; } });
@@ -375,7 +386,13 @@ function setup(opts) {
       && card.all('sauce-dp-chip').map((c) => c.textContent).join('|') === 'Due today|1/2 subtasks',
       card && card.all('sauce-dp-chip').map((c) => c.textContent).join('|'));
     const labels = card ? card.all('sauce-dp-btn').map((b) => b.textContent) : [];
-    ok('DP-RENDER-2 Now actions: Copy prompt, Copy message, Open, Unpin', labels.join('|') === 'Copy prompt|Copy message|Open|Unpin', labels.join('|'));
+    ok('DP-RENDER-2 Now actions: Copy prompt, Copy message, Open', labels.join('|') === 'Copy prompt|Copy message|Open', labels.join('|'));
+    const unpinBtn = card && card.one('sauce-dp-now-top') && card.one('sauce-dp-now-top').one('sauce-dp-unpin');
+    ok('DP-RENDER-2b Unpin is the small pressed pin button in the card top row, an icon with no text',
+      !!unpinBtn && /\bsauce-dp-pin\b/.test(unpinBtn.className) && /\bis-pinned\b/.test(unpinBtn.className)
+      && unpinBtn.getAttribute('aria-label') === 'Unpin' && unpinBtn.getAttribute('aria-pressed') === 'true'
+      && unpinBtn.textContent === '' && !/\bsauce-dp-btn\b/.test(unpinBtn.className),
+      unpinBtn && unpinBtn.className);
     let copied = null;
     app.vault.cachedRead = async (f) => f.body;
     window.customJS.TaskTodayList = { copyText: async (t) => { copied = t; return true; } };
