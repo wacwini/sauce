@@ -36,6 +36,9 @@
  *   TaskEntity._groupSubtaskCounts(parsedTasks)  → { [parentBasename]: {done,total} }
  *   TaskEntity.subtaskCountsByParent(dv)          → { [parentBasename]: {done,total} }
  *   TaskEntity.validatePayload(payload)      → { valid, reason }
+ *   TaskEntity.subtaskIndex(tasks)           → the open and loaded parents
+ *   TaskEntity.isSubtask(task, index)        → whether it lives on a parent's card
+ *   TaskEntity.withoutSubtasks(tasks, index) → the tasks that list on their own
  */
 class TaskEntity {
 
@@ -77,6 +80,9 @@ class TaskEntity {
     nextMonday(todayStr) { return TaskEntity.nextMonday(todayStr); }
     daysLate(task, todayStr) { return TaskEntity.daysLate(task, todayStr); }
     isBacklog(task) { return TaskEntity.isBacklog(task); }
+    subtaskIndex(tasks) { return TaskEntity.subtaskIndex(tasks); }
+    isSubtask(task, index) { return TaskEntity.isSubtask(task, index); }
+    withoutSubtasks(tasks, index) { return TaskEntity.withoutSubtasks(tasks, index); }
     bucketOf(task, todayStr) { return TaskEntity.bucketOf(task, todayStr); }
     completedDay(task) { return TaskEntity.completedDay(task); }
     compareBy(mode, todayStr) { return TaskEntity.compareBy(mode, todayStr); }
@@ -138,6 +144,62 @@ class TaskEntity {
         if (t.project_slug || t.trip_slug || t.parent_task) return false;
         if (t.source === 'meeting') return false;
         return true;
+    }
+
+    static _noteBase(path) {
+        const s = String(path == null ? '' : path);
+        return s.slice(s.lastIndexOf('/') + 1).replace(/\.md$/i, '');
+    }
+
+    /**
+     * The tasks that can hold others on their card, from every loaded parsed
+     * task: by path (a folder note's children name it by parent_path) and by
+     * note name (a flat child names it by its parent_task link), once for open
+     * tasks and once for every task. Pure.
+     */
+    static subtaskIndex(tasks) {
+        const index = { openPaths: new Set(), openNames: new Set(), paths: new Set(), names: new Set() };
+        for (const task of Array.isArray(tasks) ? tasks : []) {
+            if (!task || !task.path) continue;
+            const path = String(task.path);
+            const name = TaskEntity._noteBase(path);
+            index.paths.add(path);
+            if (name) index.names.add(name);
+            if (String(task.status || 'open').toLowerCase() === 'open') {
+                index.openPaths.add(path);
+                if (name) index.openNames.add(name);
+            }
+        }
+        return index;
+    }
+
+    /**
+     * Whether a task lives on its parent's card rather than listing on its
+     * own. With no `index`, any task with a parent counts. With one (see
+     * subtaskIndex), only a task whose parent is loaded counts, and an open
+     * task's parent must be open too: an open task under a done, deleted or
+     * missing parent shows on no card, so it lists on its own.
+     */
+    static isSubtask(task, index) {
+        if (!task) return false;
+        const name = String(task.parent_task == null ? '' : task.parent_task).trim();
+        if (!name) return false;
+        if (!index) return true;
+        const open = String(task.status || 'open').toLowerCase() === 'open';
+        const parentPath = String(task.parent_path == null ? '' : task.parent_path).trim();
+        if (parentPath) {
+            if (parentPath === task.path) return false;
+            return (open ? index.openPaths : index.paths).has(parentPath);
+        }
+        if (name === TaskEntity._noteBase(task.path)) return false;
+        return (open ? index.openNames : index.names).has(name);
+    }
+
+    /** `tasks` without their subtasks (isSubtask over `index`, default built from `tasks`), in order. */
+    static withoutSubtasks(tasks, index) {
+        const list = Array.isArray(tasks) ? tasks : [];
+        const idx = index || TaskEntity.subtaskIndex(list);
+        return list.filter((task) => task && !TaskEntity.isSubtask(task, idx));
     }
 
     /**

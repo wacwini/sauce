@@ -242,6 +242,20 @@ const savedWin = global.window;
     try { dailyCold = SDD.selectTasks(dailyDv, TODAY, null); } catch (_e) { dailyThrew = true; }
     ok('TF-READ-DONE-DAILY-NO-TASKENTITY with no TaskEntity the daily selection is empty and never throws',
       !dailyThrew && dailyCold.done === 0 && dailyCold.doneToday.length === 0 && dailyCold.open.length === 0);
+    const teLive = new TE();
+    const lateDay = teLive.addDays(TODAY, -2);
+    const openPage = (p, fm) => Object.assign({ type: 'task', status: 'open', file: { path: p, name: p.split('/').pop().replace(/\.md$/, '') } }, fm);
+    const SUB_PAGES = [
+      openPage('spice/tasks/Ship/Ship.md', { title: 'Ship', due: TODAY }),
+      openPage('spice/tasks/Ship/Wire it/Wire it.md', { title: 'Wire it', due: TODAY }),
+      openPage('spice/tasks/Flat kid.md', { title: 'Flat kid', due: lateDay, parent_task: '[[Ship]]' }),
+      openPage('spice/tasks/Orphan.md', { title: 'Orphan', due: TODAY, parent_task: '[[Gone]]' }),
+    ];
+    const subSel = SDD.selectTasks({ pages: () => SUB_PAGES }, TODAY, teLive);
+    ok('TF-READ-DAILY-NO-SUBTASKS Up next and the late lists leave out subtasks of an open parent; an orphan still lists',
+      sorted(subSel.open.map((t) => t.title)) === sorted(['Ship', 'Orphan'])
+      && subSel.overdue.length === 0 && subSel.stale.length === 0,
+      JSON.stringify([subSel.open.map((t) => t.title), subSel.overdue.map((t) => t.title)]));
     const donePathSrc = read('blueprints/daily/helpers/space-daily-dashboard.js');
     ok('TF-READ-DONE-NO-DONE-SOURCE no done surface sources spice/tasks/_done',
       ![donePathSrc, read('mechanisms/task-entity/task-done-today-list.js'), read('blueprints/to-do/helpers/task-done-archive.js')]

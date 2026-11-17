@@ -248,8 +248,11 @@ class SpaceDailyDashboard {
       openParsed.push(TE.parseNote(p));
     }
     // LIST = today only (due == today) + the late band (due before today), which
-    // splits into overdue (1..29 days late) and stale (>= 30 days late).
-    const bands = TE.queryToday(openParsed, todayStr);
+    // splits into overdue (1..29 days late) and stale (>= 30 days late). A
+    // subtask lists on its parent's card, not here (TaskEntity.isSubtask over
+    // every open task: one under a done or missing parent still lists).
+    const listed = typeof TE.withoutSubtasks === "function" ? TE.withoutSubtasks(openParsed) : openParsed;
+    const bands = TE.queryToday(listed, todayStr);
     const open = Array.isArray(bands.today) ? bands.today : [];
     const late = Array.isArray(bands.overdue) ? bands.overdue : [];
     const overdue = [];

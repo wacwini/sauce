@@ -183,6 +183,18 @@ function setup(opts) {
     ok('DP-PLAN-4 the signature follows the due counts the panel shows, not the titles of tasks it no longer lists',
       DPC.signature(model) === DPC.signature(renamed) && DPC.signature(model) !== DPC.signature(fewer));
 
+    const kids = [
+      { title: 'Kid today', path: 'spice/tasks/Pay rent/Kid today/Kid today.md', status: 'open', due: TODAY, parent_task: 'Pay rent', parent_path: 'spice/tasks/Pay rent/Pay rent.md' },
+      { title: 'Kid late', path: 'spice/tasks/Kid late.md', status: 'open', due: '2026-11-10', parent_task: 'Call bank', parent_path: '' },
+      { title: 'Orphan today', path: 'spice/tasks/Orphan today.md', status: 'open', due: TODAY, parent_task: 'Nobody', parent_path: '' },
+    ];
+    const withKids = DPC.planModel({ tasks: tasks.concat(kids), today: TODAY });
+    ok('DP-PLAN-SUB-1 Overdue and Due today leave out subtasks (they are on the parent card); an orphan still lists',
+      JSON.stringify(withKids.overdue.map((t) => t.title)) === JSON.stringify(['Old pin', 'Call bank'])
+      && JSON.stringify(withKids.dueToday.map((t) => t.title)) === JSON.stringify(['Orphan today', 'Pay rent', 'Ship routes'])
+      && withKids.counts.overdue === 2 && withKids.counts.today === 3,
+      JSON.stringify([withKids.overdue.map((t) => t.title), withKids.dueToday.map((t) => t.title), withKids.counts]));
+
     const prog = DPC.subtaskProgress(tasks, now);
     ok('DP-PROG-1 subtask progress counts the folder children, done and open', prog.done === 1 && prog.total === 2, JSON.stringify(prog));
     ok('DP-PROG-2 a flat child counts by parent_task',
