@@ -192,6 +192,27 @@ async function main() {
     assert(prevented === 1 && !handle.isOpen && doc.listeners.length === 0, 'Escape teardown');
   });
 
+  await test('SM-KEYMAP an open dialog holds its own Obsidian keymap scope, released once on close', () => {
+    function FakeScope() { this.fake = true; }
+    const pushed = [];
+    const popped = [];
+    const app = {
+      scope: new FakeScope(),
+      keymap: { pushScope(s) { pushed.push(s); }, popScope(s) { popped.push(s); } },
+    };
+    const doc = makeDocument();
+    const handle = new SauceModalClass().open({ doc, app });
+    assert(pushed.length === 1 && pushed[0] instanceof FakeScope && pushed[0] !== app.scope, 'a fresh scope is pushed on open');
+    assert(popped.length === 0, 'nothing popped while open');
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+    assert(!handle.isOpen && popped.length === 1 && popped[0] === pushed[0], 'the same scope is popped on close');
+    handle.close('again');
+    assert(popped.length === 1, 'popped once');
+    const bare = new SauceModalClass().open({ doc: makeDocument(), app: {} });
+    assert(bare && bare.isOpen, 'opens without a keymap');
+    bare.close();
+  });
+
   await test('SM-7 backdrop ghost-click guard is exact and target-bound', () => {
     const doc = makeDocument();
     let now = 1000;

@@ -35,6 +35,34 @@ class SauceModal {
     return [{ label: "Close", action: "cancel" }];
   }
 
+  /**
+   * Obsidian sends keys to its active Scope (the file explorer, an editor)
+   * even while this overlay is up, so Enter in a dialog field also reached
+   * the explorer, which took focus. Like Obsidian's own modals, hold an empty
+   * Scope while open. Returns the release function (a no-op without a keymap).
+   */
+  _claimKeymap(opts) {
+    try {
+      const app = (opts && opts.app)
+        || (typeof window !== "undefined" && window.app)
+        || (typeof globalThis !== "undefined" && globalThis.app) || null;
+      const keymap = app && app.keymap;
+      if (!keymap || typeof keymap.pushScope !== "function" || typeof keymap.popScope !== "function") return () => {};
+      const ScopeCtor = (typeof Scope === "function" && Scope) || (app.scope && app.scope.constructor) || null;
+      if (typeof ScopeCtor !== "function") return () => {};
+      const scope = new ScopeCtor();
+      keymap.pushScope(scope);
+      let held = true;
+      return () => {
+        if (!held) return;
+        held = false;
+        try { keymap.popScope(scope); } catch (_e) {}
+      };
+    } catch (_e) {
+      return () => {};
+    }
+  }
+
   _isSubmitKey(event) {
     if (!event || event.key !== "Enter" || event.defaultPrevented || event.isComposing
       || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return false;
@@ -123,6 +151,7 @@ class SauceModal {
     let isOpen = true;
     let submitting = false;
     let keyListener = null;
+    let releaseKeymap = () => {};
     const handle = {
       backdrop,
       modal,
@@ -139,6 +168,7 @@ class SauceModal {
       if (!isOpen) return false;
       isOpen = false;
       if (doc.removeEventListener && keyListener) doc.removeEventListener("keydown", keyListener, true);
+      releaseKeymap();
       if (backdrop.remove) backdrop.remove();
       else if (backdrop.parentNode && backdrop.parentNode.removeChild) backdrop.parentNode.removeChild(backdrop);
       if (this._active === handle) this._active = null;
@@ -197,6 +227,7 @@ class SauceModal {
       close("mount-error");
       return null;
     }
+    if (isOpen) releaseKeymap = this._claimKeymap(opts);
 
     const focus = () => {
       if (!ownsFrame()) return;
