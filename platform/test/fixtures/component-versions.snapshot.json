@@ -1,5 +1,5 @@
 {
-  "workshop_version": "0.332.3",
+  "workshop_version": "0.333.0",
   "components": {
     "boards": "0.3.0",
     "cowork": "0.42.0",
@@ -35,7 +35,7 @@
     "task-interactions": "0.2.0",
     "open-helpers": "0.1.1",
     "icons": "0.4.0",
-    "entity-create": "0.10.0",
+    "entity-create": "0.11.0",
     "people-rendering": "0.1.0",
     "people-identity": "0.1.0",
     "styling": "0.9.0",
