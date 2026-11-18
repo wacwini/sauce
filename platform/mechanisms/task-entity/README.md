@@ -54,6 +54,12 @@ spice/tasks/
   title (`Review PR (Help Henry)`) and a top-level task its creation date
   (`Pay Bills - 11-10-26`), then ` 2`, ` 3`, … Names are fixed once given: a task
   whose name is unique is never renamed, and renames never cascade.
+- **Subtask project.** A subtask created without a project takes the `project` and
+  `project_slug` of the nearest ancestor that has one: the parent first, then up
+  by folder, then up by `parent_task` (`TaskDialog._ancestorProject`, at most 10
+  levels). So it keeps its project when it is later made top-level. A project
+  chosen for the subtask wins. A task on a trip takes none, since a trip excludes
+  a project.
 - **Status is truth.** `status: done` / `deleted` decides what is open, done or
   trashed on every list, count and Reopen gate; the path only decides where the
   note lives. A finished subtask stays in place; a finished top-level task
@@ -317,7 +323,9 @@ never fires on touch, so the phone has the menu only (no long-press drag).
   is refused before anything is written; `parent_task` is written and
   `sibling_rank` cleared (`rank` is left alone); the folder moves under the new
   parent (or to `spice/tasks/` for the top level) by the Task folders rules; an
-  undated subtask made top-level takes its old parent's due. `parent = null` is
+  undated subtask made top-level takes its old parent's due, and a task with no
+  project takes its family's, the new parent's chain when nested and the old one's
+  when made top-level (see Subtask project). `parent = null` is
   Make top-level. The current parent is `parent_task` and the folder together,
   so a folder-nested task with an empty or stale `parent_task` still moves. A
   known target file (drag, picker) is used as it is, and its link is

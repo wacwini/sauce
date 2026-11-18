@@ -293,6 +293,60 @@ const overOf = (d) => ({ types: d.types.slice(), getData: () => '', dropEffect: 
       ok('TM-REPARENT-MOVE-FAILS a failed folder move puts parent_task and sibling_rank back and leaves rank',
         r && r.ok === false && r.reason === 'move-failed' && fm && fm.parent_task === undefined && fm.sibling_rank === 4 && fm.rank === 3, JSON.stringify(fm));
     }
+    const withProject = (extra) => base(Object.assign({
+      'spice/tasks/A/A.md': { status: 'open', title: 'A', due: '2026-11-20', project: '[[Hemisphere]]', project_slug: 'hemisphere', created_at: '2026-11-01T08:00:00-07:00' },
+    }, extra || {}));
+    {
+      const app = makeApp(withProject());
+      const { TDStatic } = setup(app);
+      const r = await TDStatic.reparent(app, 'spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+      const fm = fmOf(app, 'spice/tasks/A/C/C.md');
+      ok('TM-REPARENT-NEST-PROJECT a task with no project nested under a project task takes that project',
+        r && r.ok && fm && fm.project === '[[Hemisphere]]' && fm.project_slug === 'hemisphere', JSON.stringify(fm));
+    }
+    {
+      const app = makeApp(withProject({ 'spice/tasks/C/C.md': { status: 'open', title: 'C', project: '[[Tornado]]', project_slug: 'tornado' } }));
+      const { TDStatic } = setup(app);
+      await TDStatic.reparent(app, 'spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+      const fm = fmOf(app, 'spice/tasks/A/C/C.md');
+      ok('TM-REPARENT-NEST-PROJECT-OWN a task\'s own project is never replaced by its new parent\'s',
+        fm && fm.project === '[[Tornado]]' && fm.project_slug === 'tornado', JSON.stringify(fm));
+    }
+    {
+      const app = makeApp(withProject({ 'spice/tasks/C/C.md': { status: 'open', title: 'C', trip: '[[Japan]]', trip_slug: 'japan' } }));
+      const { TDStatic } = setup(app);
+      await TDStatic.reparent(app, 'spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+      const fm = fmOf(app, 'spice/tasks/A/C/C.md');
+      ok('TM-REPARENT-NEST-PROJECT-TRIP a task on a trip takes no project (a trip excludes one)',
+        fm && !fm.project && fm.trip_slug === 'japan', JSON.stringify(fm));
+    }
+    {
+      const app = makeApp(withProject());
+      const { TDStatic } = setup(app);
+      const r = await TDStatic.reparent(app, 'spice/tasks/A/B/B.md', null);
+      const fm = fmOf(app, 'spice/tasks/B/B.md');
+      ok('TM-REPARENT-DETACH-PROJECT a project-less subtask made top-level keeps its old parent\'s project',
+        r && r.ok && fm && fm.project === '[[Hemisphere]]' && fm.project_slug === 'hemisphere', JSON.stringify(fm));
+    }
+    {
+      const app = makeApp(withProject({ 'spice/tasks/A/B/B.md': { status: 'open', title: 'B', parent_task: '[[A]]', project: '[[Tornado]]', project_slug: 'tornado' } }));
+      const { TDStatic } = setup(app);
+      const r = await TDStatic.reparent(app, 'spice/tasks/A/B/B.md', null, {
+        write: (fm) => { fm.project = ''; fm.project_slug = ''; },
+      });
+      const fm = fmOf(app, 'spice/tasks/B/B.md');
+      ok('TM-REPARENT-PROJECT-CLEARED a dialog save that clears the project while unlinking keeps it cleared',
+        r && r.ok && fm && fm.project === '' && fm.project_slug === '', JSON.stringify(fm));
+    }
+    {
+      const app = makeApp(withProject());
+      const { TDStatic } = setup(app);
+      app._failRename = true;
+      const r = await TDStatic.reparent(app, 'spice/tasks/C/C.md', 'spice/tasks/A/A.md');
+      const fm = fmOf(app, 'spice/tasks/C/C.md');
+      ok('TM-REPARENT-PROJECT-MOVE-FAILS a failed move takes the inherited project back off',
+        r && r.ok === false && fm && fm.project === undefined && fm.project_slug === undefined, JSON.stringify(fm));
+    }
     {
       const app = makeApp(base({ 'spice/tasks/_done/2026/11/Z/Z.md': { status: 'done', title: 'Z' } }));
       const { TDStatic } = setup(app);

@@ -2213,6 +2213,48 @@ class TaskDialog {
         return '';
     }
 
+    /**
+     * The parent note of the task note `f`: the note of the folder it sits
+     * in, else what its parent_task `link` resolves to; null when neither.
+     */
+    static _parentFileOf(app, f, link) {
+        try {
+            const TE = TaskDialog._taskEntity();
+            const viaFolder = f && TE && typeof TE.parentNotePathOf === 'function' ? TE.parentNotePathOf(f.path) : '';
+            const folderParent = viaFolder && app && app.vault && typeof app.vault.getAbstractFileByPath === 'function'
+                ? app.vault.getAbstractFileByPath(viaFolder) : null;
+            if (folderParent) return folderParent;
+            const info = link ? TaskDialog._resolveTaskParent(app, link) : null;
+            return info ? info.file : null;
+        } catch (_e) { return null; }
+    }
+
+    /**
+     * The project a subtask takes from its family: `project` and
+     * `project_slug` from the nearest task that has one, starting at `start`
+     * (the parent's note) and walking up by folder, then by parent_task link,
+     * at most 10 levels. The link is copied as the ancestor wrote it; a
+     * missing slug is derived from the name. null when no ancestor has one.
+     */
+    static _ancestorProject(app, start, skipPath) {
+        try {
+            const seen = new Set([String(skipPath || '')]);
+            let cur = start || null;
+            for (let i = 0; cur && cur.path && i < 10 && !seen.has(cur.path); i++) {
+                seen.add(cur.path);
+                const pfm = TaskDialog._fmOf(app, cur) || {};
+                const name = TaskDialog._linkBasename(pfm.project);
+                if (name) {
+                    const raw = typeof pfm.project === 'string' && pfm.project.trim() ? pfm.project.trim() : '[[' + name + ']]';
+                    const slug = String(pfm.project_slug == null ? '' : pfm.project_slug).trim() || TaskDialog._slugify(name);
+                    return { project: raw, project_slug: slug };
+                }
+                cur = TaskDialog._parentFileOf(app, cur, pfm.parent_task == null ? '' : String(pfm.parent_task).trim());
+            }
+        } catch (_e) { /* no inherited project */ }
+        return null;
+    }
+
     static _fmOf(app, file) {
         try {
             const cache = app && app.metadataCache && typeof app.metadataCache.getFileCache === 'function'
@@ -2579,6 +2621,16 @@ class TaskDialog {
         }
         const inheritedDue = keep ? '' : TaskDialog._detachDue(app, file,
             Object.assign({ due: o.due !== undefined ? o.due : prior.due }, payload), prior);
+        // A task with no project of its own takes its family's when it is
+        // nested (the new parent's chain) or made top-level (the old one's).
+        // A task that had a project keeps what the edit gives it, even none;
+        // the write below also skips a task on a trip (a trip excludes one).
+        const priorProject = String(prior.project == null ? '' : prior.project).trim()
+            || String(prior.project_slug == null ? '' : prior.project_slug).trim();
+        const inheritedProject = keep || !linkChanged || priorProject ? null
+            : TaskDialog._ancestorProject(app,
+                link ? (target.file || (TaskDialog._resolveTaskParent(app, link) || {}).file) : TaskDialog._parentFileOf(app, file, oldLink),
+                String(file.path || ''));
         if (!changed && !plan.folder && typeof o.write !== 'function') {
             return { ok: true, path: String(file.path), changed: false };
         }
@@ -2589,6 +2641,9 @@ class TaskDialog {
             if (typeof o.write === 'function') o.write(fm, { inheritedDue });
             else if (inheritedDue) { fm.due = inheritedDue; fm.rank = ''; }
             if (linkChanged) fm.parent_task = link;
+            if (inheritedProject && !String(fm.project == null ? '' : fm.project).trim()
+                && !String(fm.project_slug == null ? '' : fm.project_slug).trim()
+                && !String(fm.trip_slug == null ? '' : fm.trip_slug).trim()) Object.assign(fm, inheritedProject);
             if (changed && hadSibling) fm.sibling_rank = '';
             wrote = TaskDialog._moveDiff(before, fm);
         });
@@ -2603,6 +2658,7 @@ class TaskDialog {
                 const fields = { title: prior.title, parent_task: prior.parent_task };
                 if (changed && hadSibling) fields.sibling_rank = prior.sibling_rank;
                 if (inheritedDue) { fields.due = prior.due; fields.rank = prior.rank; }
+                if (inheritedProject) { fields.project = prior.project; fields.project_slug = prior.project_slug; }
                 await TaskDialog._restoreFields(app, [{ file, fields }]);
                 return { ok: false, reason: 'move-failed', error: e };
             }
@@ -2869,6 +2925,13 @@ class TaskDialog {
             createdAt: frontmatter.created_at,
             taken: TaskDialog._takenNames(app, reservedNames),
         });
+        // A subtask created without a project (or a trip, which excludes
+        // one) takes its family's.
+        if (parentInfo && !String(frontmatter.project == null ? '' : frontmatter.project).trim()
+            && !String(frontmatter.trip_slug == null ? '' : frontmatter.trip_slug).trim()) {
+            const inherited = TaskDialog._ancestorProject(app, parentInfo.file);
+            if (inherited) Object.assign(frontmatter, inherited);
+        }
         const path = TE.folderNotePath(parentFolder ? parentFolder.folder : TE.TASK_ROOT, name);
         // Chrome first (from composeNote), then the typed notes below the marker.
         const chromeBody = body || '';
