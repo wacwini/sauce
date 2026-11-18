@@ -57,7 +57,11 @@ function makeApp(files, parentLinks, titles) {
         const hit = (parentLinks || {})[name];
         return hit ? vault.get(hit) || null : null;
       },
-      getFileCache: (f) => (titles && titles[f.path] ? { frontmatter: { title: titles[f.path] } } : null),
+      getFileCache: (f) => {
+        const t = titles && titles[f.path];
+        if (!t) return null;
+        return { frontmatter: typeof t === 'object' ? t : { title: t } };
+      },
     },
   };
 }
@@ -106,6 +110,51 @@ function setup(app, day) {
       await TD.createQuick({ title: 'C', today: '2026-11-10', parent_task: '[[B]]', reconcile: false });
       ok('TF-CREATE-SUB-DEEP a subtask of a subtask nests inside the subtask folder',
         app._creates[0].path === 'spice/tasks/A/B/C/C.md');
+    }
+
+    {
+      const app = makeApp(['spice/tasks/Hemi/Hemi.md'], { Hemi: 'spice/tasks/Hemi/Hemi.md' },
+        { 'spice/tasks/Hemi/Hemi.md': { title: 'Hemi', project: '[[Hemisphere]]', project_slug: 'hemisphere' } });
+      const { TD } = setup(app);
+      await TD.createQuick({ title: 'Golden Tests', today: '2026-11-10', parent_task: '[[Hemi]]', reconcile: false });
+      const c = app._creates[0].content;
+      ok('TF-CREATE-SUB-PROJECT a subtask takes its parent\'s project and project_slug',
+        /\nproject: "\[\[Hemisphere\]\]"\n/.test(c) && /\nproject_slug: hemisphere\n/.test(c), c.split('\n').slice(0, 12).join(' / '));
+    }
+
+    {
+      const app = makeApp(['spice/tasks/A/A.md', 'spice/tasks/A/B/B.md'], { B: 'spice/tasks/A/B/B.md' }, {
+        'spice/tasks/A/A.md': { title: 'A', project: '[[Hemisphere]]' },
+        'spice/tasks/A/B/B.md': { title: 'B', parent_task: '[[A]]' },
+      });
+      const { TD } = setup(app);
+      await TD.createQuick({ title: 'C', today: '2026-11-10', parent_task: '[[B]]', reconcile: false });
+      const c = app._creates[0].content;
+      ok('TF-CREATE-SUB-PROJECT-ANCESTOR with a project-less parent the nearest ancestor\'s project is taken, slug derived',
+        /\nproject: "\[\[Hemisphere\]\]"\n/.test(c) && /\nproject_slug: hemisphere\n/.test(c));
+    }
+
+    {
+      const app = makeApp(['spice/tasks/Hemi/Hemi.md'], { Hemi: 'spice/tasks/Hemi/Hemi.md' },
+        { 'spice/tasks/Hemi/Hemi.md': { title: 'Hemi', project: '[[Hemisphere]]', project_slug: 'hemisphere' } });
+      const { TD } = setup(app);
+      const plan = TD._prepareCreate(app, { title: 'Own', parent_task: '[[Hemi]]', project: { name: 'Tornado', slug: 'tornado' }, links: [] }, '');
+      ok('TF-CREATE-SUB-PROJECT-OWN a project chosen for the subtask wins over the parent\'s',
+        plan && plan.frontmatter.project === '[[Tornado]]' && plan.frontmatter.project_slug === 'tornado');
+      const onTrip = TD._prepareCreate(app, { title: 'Pack', parent_task: '[[Hemi]]', trip: { name: 'Japan', slug: 'japan' }, links: [] }, '');
+      ok('TF-CREATE-SUB-PROJECT-TRIP a subtask created on a trip takes no project (a trip excludes one)',
+        onTrip && onTrip.frontmatter.project === '' && onTrip.frontmatter.trip_slug === 'japan');
+    }
+
+    {
+      const app = makeApp(['spice/tasks/Help Henry/Help Henry.md'], { 'Help Henry': 'spice/tasks/Help Henry/Help Henry.md' },
+        { 'spice/tasks/Help Henry/Help Henry.md': { title: 'Help Henry' } });
+      const { TD } = setup(app);
+      const plan = TD.prepareQuick({ title: 'Review PR', parent_task: '[[Help Henry]]' });
+      const top = TD.prepareQuick({ title: 'Solo' });
+      ok('TF-CREATE-SUB-PROJECT-NONE no project in the family, or no parent, leaves project empty',
+        plan && plan.frontmatter.project === '' && plan.frontmatter.project_slug === ''
+        && top && top.frontmatter.project === '');
     }
 
     {
