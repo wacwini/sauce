@@ -2932,6 +2932,275 @@ failures += !run("PERF8-SECTION-EXPLORER structural bulk awaits each receipt-bou
   assert.ok(/moved\s*\+=\s*1/.test(source));
 });
 
+// ── Drag and drop: move a doc or section (desktop) ─────────────────────────
+
+function findByClass(node, cls) {
+  const out = [];
+  const visit = (n) => {
+    for (const child of (n && n.children) || []) {
+      if (String(child.className || "").split(/\s+/).includes(cls)) out.push(child);
+      visit(child);
+    }
+  };
+  visit(node);
+  return out;
+}
+
+function dragEvent(types) {
+  const ev = {
+    prevented: false,
+    stopped: false,
+    data: {},
+    dataTransfer: { types: types || [], dropEffect: "", effectAllowed: "", setData(t, v) { ev.data[t] = v; } },
+    preventDefault() { ev.prevented = true; },
+    stopPropagation() { ev.stopped = true; },
+  };
+  return ev;
+}
+
+function dragFixture(opts) {
+  const o = opts || {};
+  const SectionExplorer = loadClass();
+  const se = new SectionExplorer();
+  const { container } = makeDomStub();
+  const existing = new Set(o.existing || [
+    "spice/wiki", "spice/wiki/ems", "spice/wiki/ems/radios", "spice/wiki/ems/protocols",
+    "spice/wiki/ems/Intro.md",
+  ]);
+  global.app = {
+    isMobile: !!o.mobile,
+    vault: { getAbstractFileByPath: (p) => (existing.has(p) ? { path: p } : null) },
+    workspace: { openLinkText: () => {} },
+  };
+  const moves = [];
+  se.applyDocMove = async (_dv, file, dest) => { moves.push({ kind: "doc", from: file.path, dest }); return { ok: true }; };
+  se.moveSection = async (_dv, section, dest) => { moves.push({ kind: "section", from: section.folder, dest }); return { ok: true }; };
+  const sections = [
+    { title: "Radios", folder: "spice/wiki/ems/radios", hubPath: "spice/wiki/ems/radios/Radios.md", pageCount: 1, subSectionCount: 0 },
+    { title: "Protocols", folder: "spice/wiki/ems/protocols", hubPath: "spice/wiki/ems/protocols/Protocols.md", pageCount: 0, subSectionCount: 0 },
+  ];
+  const adapter = se.makeAdapter({
+    resolveContext: () => ({ scopePath: "spice/wiki/ems" }),
+    listSections: () => sections,
+    listPages: () => [{ title: "Intro", file: { path: "spice/wiki/ems/Intro.md", name: "Intro.md" } }],
+    getLinks: () => [],
+    writeLinks: () => Promise.resolve(),
+    icons: { folder: "", file: "" },
+    move: o.noMove ? null : {
+      root: "spice/wiki",
+      enumerateSectionTargets: () => [
+        { folder: "spice/wiki", label: "Wiki (root)", depth: 0 },
+        { folder: "spice/wiki/ems", label: "EMS", depth: 1 },
+        { folder: "spice/wiki/ems/radios", label: "Radios", depth: 2 },
+        { folder: "spice/wiki/ems/protocols", label: "Protocols", depth: 2 },
+      ],
+      canAcceptSection: () => true,
+    },
+  });
+  const dv = { container, current: () => ({ file: { path: "spice/wiki/ems/EMS.md", folder: "spice/wiki/ems" } }) };
+  se.render(dv, adapter);
+  const rows = findByClass(container, "se-rail-row");
+  const cards = findByClass(container, "se-doc-card");
+  const strips = findByClass(container, "se-drop-up");
+  return { se, container, rows, cards, strips, moves, MIME: SectionExplorer.DRAG_MIME };
+}
+
+failures += !run("SE-DROP-REFUSAL: a doc drops into another folder of its own tree, never where it already is", () => {
+  const SE = loadClass();
+  const doc = { kind: "doc", path: "spice/wiki/ems/Intro.md" };
+  const opts = { root: "spice/wiki" };
+  assert.strictEqual(SE.dropRefusal(doc, "spice/wiki/ems/radios", opts), "");
+  assert.strictEqual(SE.dropRefusal(doc, "spice/wiki/ems", opts), "Already here");
+  assert.strictEqual(SE.dropRefusal(doc, "spice/projects/foo/docs", opts), "Can't move it out of here");
+  assert.strictEqual(SE.dropRefusal(doc, "spice/wiki/ems/radios", { root: "spice/wiki", exists: (p) => p === "spice/wiki/ems/radios/Intro.md" }),
+    "A doc with that name is already there");
+  assert.strictEqual(SE.dropRefusal(null, "spice/wiki", opts), "Nothing to move");
+  assert.strictEqual(SE.dropRefusal(doc, "", opts), "Nothing to move");
+});
+
+failures += !run("SE-DROP-REFUSAL: a section never drops on itself, inside itself, where it is, or past the depth rule", () => {
+  const SE = loadClass();
+  const sec = { kind: "section", folder: "spice/wiki/ems/radios", title: "Radios", section: { folder: "spice/wiki/ems/radios", title: "Radios" } };
+  const opts = { root: "spice/wiki" };
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/protocols", opts), "");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki", opts), "");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/radios", opts), "Can't drop a section on itself");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/radios/handhelds", opts), "Can't go inside itself");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems", opts), "Already here");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/radiosx", opts), "", "a sibling sharing a name prefix is not inside it");
+  let asked = null;
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/protocols", { root: "spice/wiki", canAcceptSection: (s, d) => { asked = [s.title, d]; return false; } }),
+    "Too deep to nest here");
+  assert.deepStrictEqual(asked, ["Radios", "spice/wiki/ems/protocols"], "the depth rule gets the section and the destination");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/protocols", { root: "spice/wiki", canAcceptSection: () => { throw new Error("x"); } }),
+    "Too deep to nest here", "a throwing depth rule refuses");
+  assert.strictEqual(SE.dropRefusal(sec, "spice/wiki/ems/protocols", { root: "spice/wiki", exists: (p) => p === "spice/wiki/ems/protocols/radios" }),
+    "A section with that name is already there");
+});
+
+failures += !run("SE-PARENT-DROP-FOLDER: one level up inside the root, nothing at the root or outside it", () => {
+  const SE = loadClass();
+  assert.strictEqual(SE.parentDropFolder("spice/wiki/ems", "spice/wiki"), "spice/wiki");
+  assert.strictEqual(SE.parentDropFolder("spice/wiki/ems/radios", "spice/wiki"), "spice/wiki/ems");
+  assert.strictEqual(SE.parentDropFolder("spice/wiki", "spice/wiki"), "");
+  assert.strictEqual(SE.parentDropFolder("spice/wikis/x", "spice/wiki"), "");
+  assert.strictEqual(SE.parentDropFolder("", "spice/wiki"), "");
+});
+
+failures += !run("SE-DRAG-WIRE: on desktop every doc card and section row drags, and a section page gets a hidden Move up strip", () => {
+  const prevApp = global.app;
+  try {
+    const f = dragFixture();
+    assert.strictEqual(f.rows.length, 2);
+    assert.strictEqual(f.cards.length, 1);
+    for (const el of [...f.rows, ...f.cards]) {
+      assert.strictEqual(el.draggable, true);
+      assert.strictEqual(typeof el.ondragstart, "function");
+    }
+    for (const row of f.rows) assert.strictEqual(typeof row.ondrop, "function", "a section row takes a drop");
+    assert.strictEqual(f.cards[0].ondrop, undefined, "a doc card is not a drop target");
+    assert.strictEqual(f.strips.length, 1);
+    assert.strictEqual(f.strips[0].__seDropFolder, "spice/wiki");
+    assert.ok(!f.strips[0].classList.contains("is-active"), "the strip stays hidden until a drag starts");
+  } finally { global.app = prevApp; }
+});
+
+failures += !run("SE-DRAG-WIRE: no drag on the phone, and none without a move block", () => {
+  const prevApp = global.app;
+  try {
+    for (const f of [dragFixture({ mobile: true }), dragFixture({ noMove: true })]) {
+      for (const el of [...f.rows, ...f.cards]) {
+        assert.notStrictEqual(el.draggable, true);
+        assert.strictEqual(el.ondragstart, undefined);
+        assert.strictEqual(el.ondrop, undefined);
+      }
+      assert.strictEqual(f.strips.length, 0);
+    }
+  } finally { global.app = prevApp; }
+});
+
+ASYNC_TESTS.push({ name: "SE-DROP-DOC: dragging a doc card onto a section row moves it into that section", fn: async () => {
+  const prevApp = global.app;
+  try {
+    const f = dragFixture();
+    const start = dragEvent([]);
+    f.cards[0].ondragstart(start);
+    assert.strictEqual(start.data[f.MIME], "spice/wiki/ems/Intro.md");
+    assert.strictEqual(start.dataTransfer.effectAllowed, "move");
+    assert.ok(f.cards[0].classList.contains("is-drag-source"));
+    const radios = f.rows.find((r) => r.__seDropFolder === "spice/wiki/ems/radios");
+    const over = dragEvent([f.MIME]);
+    radios.ondragover(over);
+    assert.strictEqual(over.prevented, true, "an allowed drop must preventDefault so the browser permits it");
+    assert.strictEqual(over.dataTransfer.dropEffect, "move");
+    assert.ok(radios.classList.contains("se-drop-into"));
+    const drop = dragEvent([f.MIME]);
+    await radios.ondrop(drop);
+    assert.strictEqual(drop.prevented, true);
+    assert.strictEqual(drop.stopped, true, "the drop must not reach Obsidian's own drop handling");
+    assert.deepStrictEqual(f.moves, [{ kind: "doc", from: "spice/wiki/ems/Intro.md", dest: "spice/wiki/ems/radios" }]);
+    assert.ok(!radios.classList.contains("se-drop-into"), "the highlight clears after the drop");
+    assert.ok(!f.cards[0].classList.contains("is-drag-source"));
+    assert.strictEqual(f.se._drag, null);
+  } finally { global.app = prevApp; }
+}});
+
+ASYNC_TESTS.push({ name: "SE-DROP-SECTION: a section row drops onto a sibling, never onto itself", fn: async () => {
+  const prevApp = global.app;
+  try {
+    const f = dragFixture();
+    const radios = f.rows.find((r) => r.__seDropFolder === "spice/wiki/ems/radios");
+    const protocols = f.rows.find((r) => r.__seDropFolder === "spice/wiki/ems/protocols");
+    radios.ondragstart(dragEvent([]));
+    const self = dragEvent([f.MIME]);
+    radios.ondragover(self);
+    assert.strictEqual(self.prevented, false, "a refused drop must not preventDefault");
+    assert.strictEqual(self.dataTransfer.dropEffect, "none");
+    assert.ok(radios.classList.contains("se-drop-refused"));
+    await radios.ondrop(dragEvent([f.MIME]));
+    assert.deepStrictEqual(f.moves, [], "a refused drop moves nothing");
+    protocols.ondragstart(dragEvent([]));
+    await radios.ondrop(dragEvent([f.MIME]));
+    assert.deepStrictEqual(f.moves, [{ kind: "section", from: "spice/wiki/ems/protocols", dest: "spice/wiki/ems/radios" }]);
+  } finally { global.app = prevApp; }
+}});
+
+ASYNC_TESTS.push({ name: "SE-DROP-UP: the Move up strip names the parent mid-drag and moves the doc there", fn: async () => {
+  const prevApp = global.app;
+  try {
+    const f = dragFixture();
+    f.cards[0].ondragstart(dragEvent([]));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const strip = f.strips[0];
+    assert.ok(strip.classList.contains("is-active"), "the strip shows once a drag starts");
+    assert.strictEqual(strip.textContent, "Move up to Wiki");
+    const over = dragEvent([f.MIME]);
+    strip.ondragover(over);
+    assert.strictEqual(over.prevented, true);
+    await strip.ondrop(dragEvent([f.MIME]));
+    assert.deepStrictEqual(f.moves, [{ kind: "doc", from: "spice/wiki/ems/Intro.md", dest: "spice/wiki" }]);
+    assert.ok(!strip.classList.contains("is-active"), "the strip hides again after the drop");
+  } finally { global.app = prevApp; }
+}});
+
+ASYNC_TESTS.push({ name: "SE-DROP-FOREIGN: a drag that isn't the explorer's (a file, text) passes through untouched", fn: async () => {
+  const prevApp = global.app;
+  try {
+    const f = dragFixture();
+    const row = f.rows[0];
+    const noDrag = dragEvent(["Files"]);
+    row.ondragover(noDrag);
+    assert.strictEqual(noDrag.prevented, false);
+    f.cards[0].ondragstart(dragEvent([]));
+    const foreign = dragEvent(["text/plain"]);
+    row.ondragover(foreign);
+    assert.strictEqual(foreign.prevented, false, "another kind of drag is never claimed, even mid-drag");
+    const drop = dragEvent(["text/plain"]);
+    await row.ondrop(drop);
+    assert.strictEqual(drop.prevented, false);
+    assert.deepStrictEqual(f.moves, []);
+  } finally { global.app = prevApp; }
+}});
+
+ASYNC_TESTS.push({ name: "SE-DROP-MISSING-FOLDER: a declared section with no folder neither drags nor takes a drop", fn: async () => {
+  const prevApp = global.app;
+  try {
+    const f = dragFixture({ existing: ["spice/wiki", "spice/wiki/ems", "spice/wiki/ems/radios", "spice/wiki/ems/Intro.md"] });
+    const protocols = f.rows.find((r) => r.__seDropFolder === "spice/wiki/ems/protocols");
+    const start = dragEvent([]);
+    protocols.ondragstart(start);
+    assert.strictEqual(start.prevented, true, "dragging a folderless section is cancelled");
+    assert.strictEqual(f.se._drag || null, null);
+    f.cards[0].ondragstart(dragEvent([]));
+    const over = dragEvent([f.MIME]);
+    protocols.ondragover(over);
+    assert.strictEqual(over.prevented, false);
+    await protocols.ondrop(dragEvent([f.MIME]));
+    assert.deepStrictEqual(f.moves, []);
+  } finally { global.app = prevApp; }
+}});
+
+failures += !run("SE-DRAG-PROJECT-DOCS: the project Docs page hands its explorer SectionHub's move block", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../blueprints/project/helpers/project-docs-index.js"), "utf8");
+  const factory = new Function("module", "exports", src + "\nmodule.exports = ProjectDocsIndex;");
+  const mod = { exports: {} };
+  factory(mod, mod.exports);
+  const pdi = new mod.exports();
+  const prevCJS = global.customJS;
+  try {
+    const block = { root: "spice/projects/foo/docs" };
+    let askedFor = null;
+    global.customJS = { SectionHub: { _buildMoveBlock: (_dv, root) => { askedFor = root; return block; } } };
+    const ctx = { projectSlug: "foo", projectPath: "spice/projects/foo", docsFolder: "spice/projects/foo/docs", scopePath: "spice/projects/foo/docs" };
+    const config = pdi._buildConfig({ page: () => null, pages: () => [] }, { file: { path: "spice/projects/foo/docs/Docs.md" } }, ctx);
+    assert.strictEqual(config.move, block);
+    assert.strictEqual(askedFor, "spice/projects/foo/docs");
+    global.customJS = {};
+    const cold = pdi._buildConfig({ page: () => null, pages: () => [] }, { file: { path: "spice/projects/foo/docs/Docs.md" } }, ctx);
+    assert.strictEqual(cold.move, null, "a cold-loading SectionHub leaves no move block, not a throw");
+  } finally { global.customJS = prevCJS; }
+});
+
 // Async tail — runs the queued async tests, then exits with the final tally.
 (async () => {
   for (const t of ASYNC_TESTS) {
