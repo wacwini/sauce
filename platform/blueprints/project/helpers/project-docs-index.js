@@ -180,6 +180,14 @@ class ProjectDocsIndex {
   // Rename/Delete/Add-link must only ever be offered for a MATERIALIZED
   // section (a real section-hub note exists) — gated via `section.materialized`
   // in addition to the existing zero-children guard on delete.
+  _docsMoveBlock(dv, docsFolder) {
+    try {
+      const hub = (typeof customJS !== "undefined" && customJS) ? customJS.SectionHub : null;
+      if (!hub || typeof hub._buildMoveBlock !== "function") return null;
+      return hub._buildMoveBlock(dv, docsFolder) || null;
+    } catch (_e) { return null; }
+  }
+
   _buildConfig(dv, cur, ctx) {
     const { projectSlug, projectPath, docsFolder } = ctx;
     const folderIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--interactive-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
@@ -187,6 +195,10 @@ class ProjectDocsIndex {
     const dotsIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>`;
     return {
       resolveContext: () => ctx,
+      // The same move block SectionHub hands its explorer, so the Docs page's
+      // rail ⋯ Move and drag-and-drop move docs and sections exactly as they
+      // do one level down. Null while SectionHub is still cold-loading.
+      move: this._docsMoveBlock(dv, docsFolder),
       listSections: (dv2) => {
         // Union of declared project.sections[] (virtual, may lack a hub note
         // yet) + discovered depth-1 section-hub notes (materialized). Ported

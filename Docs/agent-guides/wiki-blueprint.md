@@ -61,6 +61,19 @@ Type values are globally unique (no collision with project's `docs-hub`/`section
 
 `WikiLeafActions._openMoveDialog` renders a custom overlay with an **indented tree list** of `sectionTargets` (minus the current folder): each row is indented by `depth*18px` with a `└` connector for nested sections, so the section → sub-section hierarchy is visible; clicking a row moves the note straight into that folder. (Replaced the old flat `<select>` at v0.177.1.)
 
+## Drag and drop (desktop)
+
+`SectionExplorer` makes every doc card and section row draggable on desktop. You can drop onto any section row to move the item into that section. On a section or sub-section page, a **Move up to <parent>** strip shows above the explorer during a drag. A drop runs the same `applyDocMove` / `moveSection` the Move picker uses, so wiki moves stay folder-only and project moves rewrite `section` / `sub_section` and the hub cascade.
+
+`SectionExplorer.dropRefusal` refuses these drops, and the target shows why:
+- a drop into the folder the item is already in;
+- a section dropped onto itself or inside itself;
+- a destination past the adapter's `canAcceptSection` (project docs allow 2 levels);
+- a name already taken at the destination;
+- a drop outside the item's own wiki or project.
+
+Only the explorer's own MIME type is claimed, so file and text drags pass through to Obsidian. HTML5 drag never fires on touch, so on the phone the ⋯ menu's Move is the way to move. The project Docs page gets SectionHub's move block for this through `ProjectDocsIndex._docsMoveBlock`, which also makes its rail ⋯ Move work.
+
 ## entity-create routing
 
 Create buttons route by the **`{{current_file.folder}}`** substitution token (added to the entity-create mechanism at v0.163.0) — a new note lands in the *current note's real folder*, so nesting works from any hub/section regardless of a `dir` frontmatter field. `wiki-section` create → `<folder>/<slug>/<Name>.md`; `wiki-page` create → `<folder>/<Title>.md`.

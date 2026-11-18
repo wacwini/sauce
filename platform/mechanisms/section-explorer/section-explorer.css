@@ -459,6 +459,51 @@
   flex: 1 1 auto !important;
 }
 
+/* ── Drag and drop (desktop) ───────────────────────────────────────────── *
+ * A doc card or section row being dragged dims; a section row it can land
+ * on gets an accent outline; one it can't shows a dashed edge and why. The
+ * "Move up to <parent>" strip above the explorer shows only mid-drag. */
+.se-root .is-drag-source { opacity: 0.45; }
+.se-root .se-rail-row { position: relative; }
+.se-root .se-rail-row.se-drop-into {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-secondary));
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+.se-root .se-rail-row.se-drop-refused {
+  border: 1px dashed var(--text-faint);
+  transform: none;
+}
+.se-root .se-rail-row.se-drop-refused[data-drop-label]::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  right: 10px;
+  bottom: 6px;
+  font-size: 0.75em;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  padding: 0 4px;
+  pointer-events: none;
+}
+.se-drop-up {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--background-modifier-border-hover, var(--background-modifier-border));
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+.se-drop-up.is-active { display: flex; }
+.se-drop-up.se-drop-into {
+  border: 1px solid var(--interactive-accent);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+.se-drop-up.se-drop-refused { opacity: 0.6; }
+
 /* ── Reduced-motion off-switch ─────────────────────────────────────────── *
  * Kill every animation/transition/transform; opacity still gates the final
  * state so rail rows + the page pane snap into place without motion. */

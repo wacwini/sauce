@@ -386,6 +386,66 @@ class SectionExplorer {
     return out;
   }
 
+  // ── Drag and drop: move a doc or section (desktop only) ───────────────────
+  // HTML5 drag never fires on touch, so on the phone the ⋯ menu's Move stays
+  // the way to move. A doc card or a rail row starts a drag; a rail row takes
+  // the drop (into that section) and so does the "Move up to <parent>" strip
+  // above the explorer. A drop runs the same applyDocMove / moveSection the
+  // Move picker does, so project frontmatter and wiki folder-only moves behave
+  // identically. One drag is in flight at a time; its state lives here.
+
+  static DRAG_MIME = "application/x-sauce-section-explorer";
+
+  // Why `item` ({ kind: "doc", path } | { kind: "section", folder, section })
+  // cannot be dropped into destFolder, or "" when it can. opts.root keeps a
+  // drop inside the item's own wiki or project docs; opts.canAcceptSection is
+  // the adapter's depth rule; opts.exists(path) reports a name already taken
+  // at the destination. Pure apart from the callbacks; never throws.
+  static dropRefusal(item, destFolder, opts) {
+    try {
+      const o = opts || {};
+      const dest = String(destFolder == null ? "" : destFolder).replace(/\/+$/, "");
+      if (!item || !dest) return "Nothing to move";
+      const root = String(o.root == null ? "" : o.root).replace(/\/+$/, "");
+      const inside = (p) => !root || p === root || p.indexOf(root + "/") === 0;
+      const exists = typeof o.exists === "function" ? o.exists : () => false;
+      if (item.kind === "doc") {
+        const from = String(item.path || "");
+        if (!from) return "Nothing to move";
+        if (!inside(from) || !inside(dest)) return "Can't move it out of here";
+        if (SectionExplorer.isNoop(dest, from)) return "Already here";
+        if (exists(SectionExplorer.targetPath(dest, from))) return "A doc with that name is already there";
+        return "";
+      }
+      if (item.kind === "section") {
+        const own = String(item.folder || "").replace(/\/+$/, "");
+        if (!own) return "Nothing to move";
+        if (!inside(own) || !inside(dest)) return "Can't move it out of here";
+        if (dest === own) return "Can't drop a section on itself";
+        if (dest.indexOf(own + "/") === 0) return "Can't go inside itself";
+        if (dest === own.slice(0, own.lastIndexOf("/"))) return "Already here";
+        if (typeof o.canAcceptSection === "function") {
+          let ok = false;
+          try { ok = !!o.canAcceptSection(item.section || item, dest); } catch (_e) { ok = false; }
+          if (!ok) return "Too deep to nest here";
+        }
+        const title = (item.section && item.section.title) || item.title || "";
+        if (exists(dest + "/" + SectionExplorer._slugify(title))) return "A section with that name is already there";
+        return "";
+      }
+      return "Nothing to move";
+    } catch (_e) { return "Nothing to move"; }
+  }
+
+  // The folder one level up from currentFolder that a drag can move into, or
+  // "" when currentFolder is the root itself or outside it. Pure.
+  static parentDropFolder(currentFolder, root) {
+    const cur = String(currentFolder == null ? "" : currentFolder).replace(/\/+$/, "");
+    const r = String(root == null ? "" : root).replace(/\/+$/, "");
+    if (!cur || !r || cur === r || cur.indexOf(r + "/") !== 0) return "";
+    return cur.slice(0, cur.lastIndexOf("/"));
+  }
+
   // ── makeAdapter — build a render(dv, adapter)-ready adapter from a per-
   // blueprint config. config = {
   //   resolveContext(dv) -> ctx|null,
@@ -438,6 +498,7 @@ class SectionExplorer {
     const ctx = adapter.resolveContext(dv);
     if (!ctx) return;
 
+    this._renderUpStrip(dv, adapter, container0);
     const root = container0.createEl("div", { cls: adapter.rootClass });
     // CSS `@media (max-width)` reads the WINDOW viewport, not the actual
     // rendering pane — in Obsidian's multi-pane desktop layout a narrow note
@@ -551,6 +612,7 @@ class SectionExplorer {
       title.textContent = c.title;
       const sub = body.createEl("div", { cls: "se-doc-sub" });
       sub.textContent = this._docCardSub(c);
+      if (!select && c.path) this._wireDragSource(adapter, card, { kind: "doc", path: c.path, title: c.title });
       if (!select) {
         card.onclick = () => {
           if (c.path) { try { app.workspace.openLinkText(c.path, "", false); } catch (_e) { /* never-throw */ } }
@@ -662,6 +724,10 @@ class SectionExplorer {
     row.onclick = () => {
       if (section.hubPath) app.workspace.openLinkText(section.hubPath, "");
     };
+    if (section && section.folder) {
+      this._wireDragSource(adapter, row, { kind: "section", folder: section.folder, title: section.title, section });
+      this._wireDropTarget(dv, adapter, row, section.folder);
+    }
 
     const dots = row.createEl("span", { cls: "se-rail-dots" });
     dots.innerHTML = adapter.icons.dots || "";
@@ -676,6 +742,236 @@ class SectionExplorer {
       ];
       customJS.MenuPopover.open(entries, { anchor: dots });
     };
+  }
+
+  // ── Drag wiring (desktop; see dropRefusal above) ──────────────────────────
+
+  // Drag runs only on desktop and only for an adapter with a move block.
+  _dragOn(adapter) {
+    try { if (typeof app !== "undefined" && app && app.isMobile) return false; } catch (_e) { return false; }
+    return !!(adapter && adapter.move && adapter.move.root);
+  }
+
+  // The folder of the note this explorer renders in ("" when unknown).
+  _currentFolder(dv) {
+    try {
+      const cur = dv && typeof dv.current === "function" ? dv.current() : null;
+      const f = cur && cur.file;
+      if (!f) return "";
+      if (f.folder != null) return String(f.folder);
+      const p = String(f.path || "");
+      return p.slice(0, p.lastIndexOf("/"));
+    } catch (_e) { return ""; }
+  }
+
+  // The "Move up to <parent>" strip above the explorer, on a section or
+  // sub-section (never the root). Hidden until a drag from the same wiki or
+  // project starts; its label is read then, not at render.
+  _renderUpStrip(dv, adapter, host) {
+    try {
+      if (!this._dragOn(adapter) || !host || typeof host.createEl !== "function") return null;
+      const up = SectionExplorer.parentDropFolder(this._currentFolder(dv), adapter.move.root);
+      if (!up) return null;
+      const strip = host.createEl("div", { cls: "se-drop-up" });
+      strip.textContent = "Move up";
+      strip.__seLabel = () => this._folderLabel(adapter, up);
+      this._wireDropTarget(dv, adapter, strip, up);
+      (this._strips || (this._strips = new Set())).add(strip);
+      return strip;
+    } catch (_e) { return null; }
+  }
+
+  // A destination's display name: its section title, or the root's label
+  // without "(root)", falling back to the folder name.
+  _folderLabel(adapter, folder) {
+    try {
+      const mv = adapter && adapter.move;
+      const targets = mv && typeof mv.enumerateSectionTargets === "function" ? (mv.enumerateSectionTargets() || []) : [];
+      const hit = targets.find((t) => t && t.folder === folder);
+      if (hit && hit.label) return String(hit.label).replace(/\s*\(root\)\s*$/, "");
+    } catch (_e) { /* fall back to the folder name */ }
+    return String(folder || "").split("/").pop();
+  }
+
+  _exists(path) {
+    try { return !!(path && app.vault.getAbstractFileByPath(path)); } catch (_e) { return false; }
+  }
+
+  _setCls(el, cls, on) {
+    try { if (el && el.classList) { if (on) el.classList.add(cls); else el.classList.remove(cls); } } catch (_e) { /* decoration */ }
+  }
+
+  // Make a doc card or rail row draggable.
+  _wireDragSource(adapter, el, item) {
+    try {
+      if (!el || !this._dragOn(adapter)) return;
+      el.draggable = true;
+      el.ondragstart = (ev) => {
+        const from = String(item.kind === "doc" ? item.path : item.folder);
+        if (!this._exists(from)) {
+          // A declared section with no folder yet has nothing to move.
+          if (ev && ev.preventDefault) ev.preventDefault();
+          return;
+        }
+        try {
+          const dt = ev && ev.dataTransfer;
+          if (dt) {
+            dt.effectAllowed = "move";
+            dt.setData(SectionExplorer.DRAG_MIME, from);
+          }
+        } catch (_e) { /* the shared state still carries the drag */ }
+        this._startDrag(Object.assign({}, item, { root: String(adapter.move.root) }), el);
+      };
+      el.ondragend = () => this._endDrag();
+    } catch (_e) { /* never-throw */ }
+  }
+
+  // Begin a drag. The up strips show on the next tick: changing layout inside
+  // dragstart can make Chromium cancel the drag.
+  _startDrag(state, sourceEl) {
+    this._drag = state || null;
+    this._dragSource = sourceEl || null;
+    this._setCls(sourceEl, "is-drag-source", true);
+    this._ensureDocEnd();
+    const show = () => {
+      if (this._drag !== state) return;
+      for (const strip of Array.from(this._strips || [])) {
+        if (!strip || strip.isConnected === false) { this._strips.delete(strip); continue; }
+        if (strip.__seRoot !== state.root) continue;
+        let label = "";
+        try { label = typeof strip.__seLabel === "function" ? strip.__seLabel() : ""; } catch (_e) { label = ""; }
+        strip.textContent = label ? "Move up to " + label : "Move up";
+        this._setCls(strip, "is-active", true);
+      }
+    };
+    try { if (typeof setTimeout === "function") setTimeout(show, 0); else show(); } catch (_e) { show(); }
+  }
+
+  // End the drag: clear its state, every highlight and the strips.
+  _endDrag() {
+    this._drag = null;
+    if (this._dragSource) { this._setCls(this._dragSource, "is-drag-source", false); this._dragSource = null; }
+    for (const el of Array.from(this._lit || [])) this._paintDrop(el, null);
+    for (const strip of Array.from(this._strips || [])) this._setCls(strip, "is-active", false);
+  }
+
+  // One document-level dragend / drop listener per document, so a drag that
+  // ends outside every target, or whose source was redrawn mid-drag, still
+  // clears. It reaches the live instance through customJS.
+  _ensureDocEnd() {
+    try {
+      if (typeof document === "undefined" || !document || typeof document.addEventListener !== "function") return;
+      if (document.__sauceSeDragEnd) return;
+      const end = () => {
+        try {
+          const live = (typeof window !== "undefined" && window.customJS && window.customJS.SectionExplorer) || this;
+          if (live && typeof live._endDrag === "function") live._endDrag();
+        } catch (_e) { /* nothing to clear */ }
+      };
+      document.addEventListener("dragend", end);
+      document.addEventListener("drop", end);
+      document.__sauceSeDragEnd = true;
+    } catch (_e) { /* the source's own dragend still clears */ }
+  }
+
+  // Show where a drop lands: an outline ("into") or a refusal with its reason.
+  _paintDrop(el, mode, label) {
+    if (!el) return;
+    const lit = this._lit || (this._lit = new Set());
+    if (mode) lit.add(el); else lit.delete(el);
+    this._setCls(el, "se-drop-into", mode === "into");
+    this._setCls(el, "se-drop-refused", mode === "refused");
+    try {
+      if (el.dataset) {
+        if (mode === "refused" && label) el.dataset.dropLabel = label;
+        else delete el.dataset.dropLabel;
+      }
+    } catch (_e) { /* decoration */ }
+  }
+
+  // Make el take a drop into folder. Only this explorer's own drags are
+  // accepted; anything else (a file from the explorer, text) passes through.
+  _wireDropTarget(dv, adapter, el, folder) {
+    try {
+      if (!el || !this._dragOn(adapter)) return;
+      const mv = adapter.move;
+      el.__seDropFolder = folder;
+      el.__seRoot = String(mv.root);
+      const ours = (ev) => {
+        const st = this._drag;
+        if (!st) return null;
+        let types = [];
+        try { types = Array.from((ev && ev.dataTransfer && ev.dataTransfer.types) || []).map(String); } catch (_e) { types = []; }
+        if (types.length && !types.includes(SectionExplorer.DRAG_MIME)) return null;
+        return st;
+      };
+      // Worked out once per drag per target: dragover fires continuously and
+      // the depth rule reads the vault.
+      const refusalOf = (st) => {
+        if (el.__seDropFor !== st) {
+          el.__seDropFor = st;
+          el.__seRefusal = !this._exists(folder)
+            ? "This section has no folder yet"
+            : SectionExplorer.dropRefusal(st, folder, {
+              root: mv.root,
+              canAcceptSection: typeof mv.canAcceptSection === "function" ? mv.canAcceptSection : null,
+              exists: (p) => this._exists(p),
+            });
+        }
+        return el.__seRefusal;
+      };
+      const over = (ev) => {
+        const st = ours(ev);
+        if (!st) return;
+        const refusal = refusalOf(st);
+        try { if (ev.dataTransfer) ev.dataTransfer.dropEffect = refusal ? "none" : "move"; } catch (_e) { /* cosmetic */ }
+        if (!refusal && ev.preventDefault) ev.preventDefault();
+        this._paintDrop(el, refusal ? "refused" : "into", refusal);
+      };
+      el.ondragenter = over;
+      el.ondragover = over;
+      el.ondragleave = (ev) => {
+        try { if (ev && ev.relatedTarget && typeof el.contains === "function" && el.contains(ev.relatedTarget)) return; } catch (_e) { /* treat as left */ }
+        this._paintDrop(el, null);
+      };
+      el.ondrop = (ev) => {
+        const st = ours(ev);
+        if (!st) return;
+        if (ev.preventDefault) ev.preventDefault();
+        if (ev.stopPropagation) ev.stopPropagation();
+        const refusal = refusalOf(st);
+        this._endDrag();
+        if (refusal) return;
+        return this._dropInto(dv, adapter, st, folder);
+      };
+    } catch (_e) { /* never-throw */ }
+  }
+
+  // Run the drop through the same move the Move picker uses, then say so.
+  async _dropInto(dv, adapter, st, folder) {
+    const notice = (msg) => { try { if (typeof Notice === "function") new Notice(msg, 3000); } catch (_e) { /* cosmetic */ } };
+    const name = (st && (st.title || String(st.path || st.folder || "").split("/").pop().replace(/\.md$/i, ""))) || "it";
+    try {
+      let res = null;
+      if (st.kind === "doc") {
+        const file = app.vault.getAbstractFileByPath(st.path);
+        if (!file) { notice("Could not find " + name); return { ok: false }; }
+        res = await this.applyDocMove(dv, file, folder, adapter);
+      } else if (st.kind === "section") {
+        res = await this.moveSection(dv, st.section, folder, adapter);
+      } else {
+        return { ok: false };
+      }
+      if (res && res.ok === false) {
+        if (!(adapter && adapter.structural === true)) notice("Could not move " + name);
+      } else {
+        notice("Moved " + name + " to " + this._folderLabel(adapter, folder));
+      }
+      return res;
+    } catch (e) {
+      notice("Could not move " + name);
+      return { ok: false, error: e };
+    }
   }
 
   // Pure link-mutation — mirrors ProjectLinksManager.addLink exactly (same
