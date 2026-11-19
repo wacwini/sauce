@@ -108,6 +108,11 @@ without being steps of it, so they are notes, not subtasks (`TaskDocs`,
   blank under its header (no starter text), and puts its name in a field
   on its row instead of opening it: type a name and press Enter, or press
   Escape to keep the default name. You stay on the task either way.
+  On a phone, or when the Notes list is under `TaskDocs.NARROW_ROW_PX`
+  (520px) wide, a row puts the title and the kind and age on the full first
+  line and the New pill and buttons on a second line, at the right
+  (`TaskDocs._narrowRowCss`: a container query on the list, repeated under
+  `body.is-phone`). The kind and age line never wraps.
 - **Header.** Every note starts with `TaskDocs.HEADER`: the breadcrumb bar
   (`TaskChromeBar`, To-Do › task › note) and the header card
   (`TaskDocs.renderHeader`). The card is tinted in the kind's colour

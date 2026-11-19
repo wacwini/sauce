@@ -530,6 +530,18 @@ ok('TD-FOLDER a folder task keeps its notes in <Task>/notes; a flat task has non
       /\.sauce-tnv-doc:hover \.sauce-tnv-doc-path/.test(TD._CSS) && /body\.is-mobile \.sauce-tnv-doc \.sauce-tnv-doc-path \{ opacity: 1;/.test(TD._CSS));
     win.customJS.TaskTodayList = priorTTL;
 
+    const css = TD._CSS;
+    const narrowBlock = (css.match(/@container sauce-tnv-notes \(max-width: (\d+)px\) \{ (.*) \}/) || []);
+    const narrowRules = ['\\.sauce-tnv-doc \\{ flex-wrap: wrap;', '\\.sauce-tnv-doc-main \\{ flex: 1 1 calc\\(100% - 48px\\);', '\\.sauce-tnv-doc-title \\{ white-space: normal;'];
+    ok('TD-NARROW-ROW a Notes row under the narrow width, or on a phone, wraps its buttons below a full-width title and kind line',
+      /\.sauce-tnv-notes \{ container: sauce-tnv-notes \/ inline-size; \}/.test(css)
+      && Number(narrowBlock[1]) === TD.NARROW_ROW_PX && TD.NARROW_ROW_PX >= 480
+      && narrowRules.every((r) => new RegExp('(^| )' + r).test(narrowBlock[2] || '') && new RegExp('body\\.is-phone ' + r).test(css))
+      && css.indexOf('@container sauce-tnv-notes') > css.indexOf('.sauce-tnv-doc-title {')
+      && css.indexOf('body.is-phone .sauce-tnv-doc-main') > css.indexOf('.sauce-tnv-doc-main {'), narrowBlock[0] || 'no container block');
+    ok('TD-NARROW-META the kind and age line never wraps, so it cannot stand one letter per line',
+      /\.sauce-tnv-doc-meta \{[^}]*white-space: nowrap;[^}]*\}/.test(css) && /\.sauce-tnv-doc-meta \{[^}]*text-overflow: ellipsis;/.test(css));
+
     const modals = [];
     const trashed = [];
     let trashFails = false;
