@@ -1585,7 +1585,9 @@ class TaskDocs {
             '@media (max-width: 480px) { .sauce-tdv-top { flex-wrap: wrap; } .sauce-tdv-sibs { margin-left: 0; width: 100%; } .sauce-tdv-actions > .sauce-btn { flex: 1 1 0; } }',
             '.sauce-tnv-doc-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; cursor: pointer; }',
             '.sauce-tnv-doc-title { color: var(--text-normal); font-size: 0.92em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
-            '.sauce-tnv-doc-meta { color: var(--text-faint, var(--text-muted)); font-size: 0.75em; }',
+            '.sauce-tnv-doc-meta { color: var(--text-faint, var(--text-muted)); font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+            '.sauce-tnv-notes { container: sauce-tnv-notes / inline-size; }',
+            ...TaskDocs._narrowRowCss(),
             'body .sauce-tnv-doc-copy.sauce-tnv-doc-copy { flex-shrink: 0; height: 26px; min-height: 26px; padding: 0 9px; font-size: 0.78em; border-radius: var(--radius-s, 6px); border: 1px solid var(--background-modifier-border); background: transparent; color: var(--text-muted); box-shadow: none; cursor: pointer; }',
             '@media (hover: hover) { body .sauce-tnv-doc-copy.sauce-tnv-doc-copy:hover { color: var(--text-normal); border-color: var(--background-modifier-border-hover); } }',
             'body .sauce-tnv-doc-copy.sauce-tnv-doc-copy.is-copied { color: var(--color-green, #4c9a5a); border-color: var(--color-green, #4c9a5a); }',
@@ -1631,6 +1633,28 @@ class TaskDocs {
             '@media (hover: hover) { body .sauce-tdv-wait-reply.sauce-tdv-wait-reply:hover { color: var(--text-normal); border-color: var(--background-modifier-border-hover); } }',
             'body.is-mobile .sauce-tdv-wait-reply.sauce-tdv-wait-reply { min-height: 36px; }',
         ].join('\n');
+    }
+
+    /**
+     * A Notes row too narrow for one line (a phone, or a pane under
+     * NARROW_ROW_PX): the title and its kind take the whole first line and
+     * the New pill and buttons sit on a second line, on the right. Without
+     * this the buttons kept their width and squeezed the title to nothing,
+     * so the kind and age stood one letter per line. The rules apply under a
+     * container query on the notes list, and again under body.is-phone for a
+     * webview without container queries.
+     */
+    static get NARROW_ROW_PX() { return 520; }
+
+    static _narrowRowCss() {
+        const rules = [
+            ['.sauce-tnv-doc', 'flex-wrap: wrap; justify-content: flex-end; column-gap: 4px; row-gap: 2px;'],
+            ['.sauce-tnv-doc-main', 'flex: 1 1 calc(100% - 48px);'],
+            ['.sauce-tnv-doc-title', 'white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;'],
+        ];
+        const inContainer = rules.map(([sel, decl]) => sel + ' { ' + decl + ' }').join(' ');
+        return ['@container sauce-tnv-notes (max-width: ' + TaskDocs.NARROW_ROW_PX + 'px) { ' + inContainer + ' }']
+            .concat(rules.map(([sel, decl]) => 'body.is-phone ' + sel + ' { ' + decl + ' }'));
     }
 
     static _injectCss() {
