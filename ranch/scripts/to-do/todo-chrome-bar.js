@@ -6,7 +6,104 @@ class ToDoChromeBar {
       list: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
       search: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>`,
       back: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>`,
+      reset: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>`,
     };
+  }
+
+  /** The one To-Do note. It always shows today; the week strip picks other days. */
+  static get TODAY_PATH() { return "spice/to-do/To-Do.md"; }
+
+  /** Where `sauce update` installs the To-Do note's layout. */
+  static get TEMPLATE_PATH() { return "ranch/templates/To-Do.md"; }
+
+  /**
+   * PURE. The To-Do note rebuilt from the installed template: the template up
+   * to and including the marker, then whatever the note holds below its own
+   * marker. A note with no marker keeps its text minus its frontmatter and its
+   * ToDoChromeBar / ToDoDailyFilterView blocks. Returns null when the template
+   * has no marker. Idempotent. Kept in step with install.js's
+   * _resetToDoSingleBody (run-todo-single-note.js checks they agree).
+   */
+  static resetBody(current, canonical) {
+    // Everything above this line in To-Do.md is Sauce's; everything below is yours.
+    const marker = "[//]: # (TODO_CHROME_END)";
+    const canon = typeof canonical === "string" ? canonical : "";
+    const at = canon.indexOf(marker);
+    if (at < 0) return null;
+    const head = canon.slice(0, at + marker.length);
+    const cur = typeof current === "string" ? current : "";
+    const mine = cur.indexOf(marker);
+    let tail;
+    if (mine >= 0) {
+      tail = cur.slice(mine + marker.length);
+    } else {
+      tail = cur
+        .replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "")
+        .replace(/```dataviewjs[ \t]*\r?\n[^`]*?class:\s*"(?:ToDoChromeBar|ToDoDailyFilterView)"[^`]*?```/g, "");
+    }
+    tail = tail.trim();
+    return head + (tail ? "\n\n" + tail + "\n" : "\n");
+  }
+
+  /** Open To-Do.md, creating it from the installed template when it is missing. */
+  static async openToday() {
+    const path = ToDoChromeBar.TODAY_PATH;
+    try {
+      let file = app.vault.getAbstractFileByPath(path);
+      if (!file) {
+        const tpl = app.vault.getAbstractFileByPath(ToDoChromeBar.TEMPLATE_PATH);
+        const body = tpl ? ToDoChromeBar.resetBody("", await app.vault.read(tpl)) : null;
+        if (body == null) {
+          if (typeof Notice === "function") new Notice(`Could not find the To-Do layout at ${ToDoChromeBar.TEMPLATE_PATH}. Run sauce update.`, 8000);
+          return;
+        }
+        try { file = await app.vault.create(path, body); }
+        catch (e) { if (!/already exists|exists/i.test((e && e.message) || "")) throw e; }
+      }
+      await app.workspace.openLinkText(path, "");
+    } catch (e) { if (typeof Notice === "function") new Notice("Could not open To-Do: " + (e.message || e), 6000); }
+  }
+
+  /**
+   * Rewrite the To-Do note's Sauce part from the installed template, keeping
+   * everything below the marker. Copies the old note to .sauce-backup/to-do/
+   * first. Writes only the To-Do note.
+   */
+  static async resetLayout(path) {
+    const target = path || ToDoChromeBar.TODAY_PATH;
+    try {
+      const tpl = app.vault.getAbstractFileByPath(ToDoChromeBar.TEMPLATE_PATH);
+      const canonical = tpl ? await app.vault.read(tpl) : "";
+      if (ToDoChromeBar.resetBody("", canonical) == null) {
+        if (typeof Notice === "function") new Notice(`Could not find the To-Do layout at ${ToDoChromeBar.TEMPLATE_PATH}. Run sauce update.`, 8000);
+        return { ok: false, reason: "no-template" };
+      }
+      const file = app.vault.getAbstractFileByPath(target);
+      if (!file) {
+        await app.vault.create(target, ToDoChromeBar.resetBody("", canonical));
+        if (typeof Notice === "function") new Notice("To-Do recreated from the Sauce layout.", 5000);
+        return { ok: true, action: "created" };
+      }
+      const before = await app.vault.read(file);
+      const after = ToDoChromeBar.resetBody(before, canonical);
+      if (after === before) {
+        if (typeof Notice === "function") new Notice("To-Do already matches the Sauce layout.", 4000);
+        return { ok: true, action: "unchanged" };
+      }
+      const stamp = (window.moment ? window.moment().format("YYYYMMDD-HHmmss") : "backup");
+      const backupDir = ".sauce-backup/to-do";
+      const backupPath = `${backupDir}/To-Do.md.${stamp}`;
+      try {
+        if (!(await app.vault.adapter.exists(backupDir))) await app.vault.adapter.mkdir(backupDir);
+        await app.vault.adapter.write(backupPath, before);
+      } catch (_e) { /* best effort */ }
+      await app.vault.modify(file, after);
+      if (typeof Notice === "function") new Notice(`To-Do reset to the Sauce layout. The old copy is at ${backupPath}.`, 6000);
+      return { ok: true, action: "reset", backupPath };
+    } catch (e) {
+      if (typeof Notice === "function") new Notice("Could not reset To-Do: " + (e.message || e), 6000);
+      return { ok: false, reason: "error" };
+    }
   }
 
   render(dv) {
@@ -24,6 +121,7 @@ class ToDoChromeBar {
       detect: (dv, page) => {
         const t = page && page.type;
         if (t === "to-do") return { context: "to-do", path: (page.file && page.file.path) || "" };
+        if (t === "to-do-today") return { context: "to-do-today", path: (page.file && page.file.path) || "" };
         if (t === "to-do-hub") return { context: "to-do-hub", path: (page.file && page.file.path) || "" };
         if (t === "project-todo") return { context: "project-todo", path: (page.file && page.file.path) || "" };
         if (t === "to-do-recurring") return { context: "to-do-recurring", path: (page.file && page.file.path) || "" };
@@ -32,14 +130,16 @@ class ToDoChromeBar {
       },
       surfaceSpec: (ctx) => {
         const iconActions = [{ id: "jump", label: "Jump to task or note", icon: ICON.search }];
-        if (ctx.context === "to-do") {
+        if (ctx.context === "to-do" || ctx.context === "to-do-today") {
+          const overflow = [
+            { id: "recurring", label: "Recurring", icon: ICON.repeat },
+            { id: "all-todos", label: "All To-Dos", icon: ICON.list },
+            { id: "completed-tasks", label: "Completed", icon: ICON.list },
+          ];
+          if (ctx.context === "to-do-today") overflow.push({ id: "reset-layout", label: "Reset to Sauce layout", icon: ICON.reset });
           return {
             primary: { id: "new-task", label: "New Task", icon: ICON.plus },
-            overflow: [
-              { id: "recurring", label: "Recurring", icon: ICON.repeat },
-              { id: "all-todos", label: "All To-Dos", icon: ICON.list },
-              { id: "completed-tasks", label: "Completed", icon: ICON.list },
-            ],
+            overflow,
             leaf: true,
             iconActions,
           };
@@ -137,15 +237,10 @@ class ToDoChromeBar {
           return;
         }
         if (id === "back-today") {
-          try {
-            const cmds = app.commands.commands || {};
-            const tid = Object.keys(cmds).find(k => /templater.*Today To-Do/.test(k));
-            if (tid) { app.commands.executeCommandById(tid); return; }
-            const today = window.moment().format("YYYY-MM-DD");
-            const folder = window.moment().format("YYYY/MM-MMMM");
-            app.workspace.openLinkText(`spice/to-do/${folder}/ToDo-${today}.md`, "");
-          } catch (e) { if (typeof Notice === "function") new Notice("Could not navigate to today: " + (e.message || e), 6000); }
-          return;
+          return ToDoChromeBar.openToday();
+        }
+        if (id === "reset-layout") {
+          return ToDoChromeBar.resetLayout(ctx && ctx.path);
         }
       },
       destinations: (dv, ctx) => {
@@ -153,15 +248,9 @@ class ToDoChromeBar {
         let curPath = ctx && ctx.path;
         if (!curPath) { try { const c = dv && dv.current ? dv.current() : null; curPath = (c && c.file && c.file.path) || ""; } catch (_e) { curPath = ""; } }
         const open = (p) => { try { customJS.ChromeBar.openNavTarget(p, dv); } catch (_e) {} };
-        const todayPath = (() => {
-          try {
-            const today = window.moment().format("YYYY-MM-DD");
-            const folder = window.moment().format("YYYY/MM-MMMM");
-            return `spice/to-do/${folder}/ToDo-${today}.md`;
-          } catch (_e) { return ""; }
-        })();
-        if (todayPath && curPath !== todayPath) {
-          out.push({ label: "Today's To-Do", icon: ICON.back, _navTarget: todayPath, onSelect: () => open(todayPath) });
+        const todayPath = ToDoChromeBar.TODAY_PATH;
+        if (curPath !== todayPath) {
+          out.push({ label: "Today's To-Do", icon: ICON.back, _navTarget: todayPath, onSelect: () => ToDoChromeBar.openToday() });
         }
         const allPath = "spice/to-do/All-ToDos.md";
         if (curPath !== allPath) {

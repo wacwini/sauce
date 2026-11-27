@@ -1488,6 +1488,14 @@
       "lane": "parallel"
     },
     {
+      "id": "todo-single-note",
+      "cmd": [
+        "node",
+        "platform/test/run-todo-single-note.js"
+      ],
+      "lane": "parallel"
+    },
+    {
       "id": "delivery-contract",
       "cmd": [
         "node",

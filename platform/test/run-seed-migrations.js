@@ -1105,6 +1105,24 @@ withTempVault((vault) => {
            /^\s*-\s*meetings-hub\s*$/m.test(archived));
     }
 
+    // ===== SEED-TODO-SINGLE-* — applyToDoSingleNoteHeal through the real install().
+    // To-Do is one note, spice/to-do/To-Do.md, that always shows today. Asserts run
+    // after two installs, so a clean end state also proves the second is a no-op.
+    {
+        ok("SEED-TODO-SINGLE-1 spice/to-do/To-Do.md is created by install()",
+           helpers.fileExists(vault, "spice/to-do/To-Do.md"));
+        let todo = "";
+        try { todo = helpers.readNote(vault, "spice/to-do/To-Do.md"); } catch (e) {}
+        let tpl = "";
+        try { tpl = helpers.readNote(vault, "ranch/templates/To-Do.md"); } catch (e) {}
+        ok("SEED-TODO-SINGLE-2 To-Do.md is exactly the installed To-Do template (type: to-do-today, views path and vault tag filled in)",
+           !!tpl && todo === tpl && /^type: to-do-today$/m.test(todo)
+           && todo.includes('dv.view("ranch/views/customjs-guard", { class: "ToDoDailyFilterView" })')
+           && !todo.includes("{{"));
+        ok("SEED-TODO-SINGLE-3 the old dated note is still where it was",
+           helpers.fileExists(vault, "spice/to-do/2026/06-June/ToDo-2026-06-17.md"));
+    }
+
     // ===== HC-V01330-SEED-DVGUARD-* — applyNoteChromeHeal step 4b guards the
     // eager dv.current().file.path in the PeopleRendering inline_body. The same
     // seed note carries the unguarded button-created form; the heal must rewrite

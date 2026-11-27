@@ -562,6 +562,7 @@ module.exports = async function (tp) {
     // reaches them (see note-chrome.md §6). Separate heal for that surface.
     await applyMeetingsHubChromeBarHeal(tp, installedNow.history, git);
     await applyMeetingsHubScaffoldArchiveHeal(tp, variables, installedNow.history, git); // NEW — scaffolds the persistent spice/meetings/Meetings.md hub + archives legacy per-day hubs under spice/meetings/hubs/ into _archive/; backup-first, idempotent, never throws.
+    await applyToDoSingleNoteHeal(tp, variables, installedNow.history, git); // the one To-Do note spice/to-do/To-Do.md: created from {{templates_path}}/To-Do.md when missing; everything above TODO_CHROME_END is rebuilt from that template, everything below is kept; backup-first, idempotent, never throws; dated ToDo-*.md notes are not touched.
     await applyStickyHubTitleHeal(tp, installedNow.history, git);
     await applyJournalHubTitleHeal(tp, installedNow.history, git);
 
@@ -8002,6 +8003,85 @@ function _stripEntityCreateMarkerBlock(body, instanceId) {
 // instance specifically.
 function _stripMeetingsHubEntityCreateBlock(body) {
   return _stripEntityCreateMarkerBlock(body, "meeting");
+}
+
+// _resetToDoSingleBody — pure. The To-Do note rebuilt from the installed
+// template: the template up to and including the TODO_CHROME_END marker, then
+// whatever the note holds below its own marker. A note with no marker keeps its
+// text minus its frontmatter and its ToDoChromeBar / ToDoDailyFilterView blocks.
+// Returns null when the template has no marker. Idempotent. Kept in step with
+// ToDoChromeBar.resetBody (the To-Do menu's "Reset to Sauce layout"); the
+// run-todo-single-note.js harness checks the two agree.
+function _resetToDoSingleBody(current, canonical) {
+  const marker = "[//]: # (TODO_CHROME_END)";
+  const canon = typeof canonical === "string" ? canonical : "";
+  const at = canon.indexOf(marker);
+  if (at < 0) return null;
+  const head = canon.slice(0, at + marker.length);
+  const cur = typeof current === "string" ? current : "";
+  const mine = cur.indexOf(marker);
+  let tail;
+  if (mine >= 0) {
+    tail = cur.slice(mine + marker.length);
+  } else {
+    tail = cur
+      .replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "")
+      .replace(/```dataviewjs[ \t]*\r?\n[^`]*?class:\s*"(?:ToDoChromeBar|ToDoDailyFilterView)"[^`]*?```/g, "");
+  }
+  tail = tail.trim();
+  return head + (tail ? "\n\n" + tail + "\n" : "\n");
+}
+
+// applyToDoSingleNoteHeal — the to-do blueprint moved from one note per day
+// (spice/to-do/YYYY/MM-Month/ToDo-YYYY-MM-DD.md) to one note,
+// spice/to-do/To-Do.md, that always shows today. The layout lives in the
+// installed {{templates_path}}/To-Do.md; a vault without it (to-do not
+// subscribed) is skipped. MISSING -> written from the template. PRESENT ->
+// _resetToDoSingleBody; when that changes it, the old note is copied to
+// .sauce-backup/<ts>/spice/to-do/To-Do.md first. Runs post-loop so it sees the
+// template whatever was installed this time. The dated notes are never read or
+// written. Never throws.
+async function applyToDoSingleNoteHeal(tp, variables, history, git) {
+  if (!tp || !tp.app || !tp.app.vault || !tp.app.vault.adapter) return;
+  const adapter = tp.app.vault.adapter;
+  const STEP = "todo_single_note_heal";
+  const TODO_DIR = "spice/to-do";
+  const TODO_PATH = `${TODO_DIR}/To-Do.md`;
+  const templatesPath = (variables && variables.templates_path) || "ranch/templates";
+  const templatePath = `${templatesPath}/To-Do.md`;
+  const stamp = () => ({ git_commit: git && git.commit, git_tag: git && git.tag, git_dirty: git && git.dirty, attempted_at: new Date().toISOString() });
+  try {
+    if (!(await adapter.exists(templatePath))) return;
+    const canonical = await adapter.read(templatePath);
+    const fresh = _resetToDoSingleBody("", canonical);
+    if (fresh == null) {
+      history?.push({ event: "warning", step: STEP, name: "To-Do.md",
+        reason: `${templatePath} has no TODO_CHROME_END marker; ${TODO_PATH} left alone`, ...stamp() });
+      return;
+    }
+    if (!(await adapter.exists(TODO_DIR))) {
+      try { await adapter.mkdir(TODO_DIR); } catch (_e) { /* already exists */ }
+    }
+    if (!(await adapter.exists(TODO_PATH))) {
+      await adapter.write(TODO_PATH, fresh);
+      history?.push({ event: "info", step: STEP, name: "To-Do.md", action: "created",
+        reason: `created ${TODO_PATH} from ${templatePath}`, ...stamp() });
+      return;
+    }
+    const before = await adapter.read(TODO_PATH);
+    const after = _resetToDoSingleBody(before, canonical);
+    if (after === before) return;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupPath = `.sauce-backup/${ts}/${TODO_PATH}`;
+    try { await adapter.mkdir(backupPath.substring(0, backupPath.lastIndexOf("/"))); } catch (_e) { /* already exists */ }
+    try { await adapter.write(backupPath, before); } catch (_e) { /* best-effort */ }
+    await adapter.write(TODO_PATH, after);
+    history?.push({ event: "info", step: STEP, name: "To-Do.md", action: "healed",
+      reason: `rebuilt the Sauce part of ${TODO_PATH} from ${templatePath} (backup at ${backupPath})`, ...stamp() });
+  } catch (e) {
+    history?.push({ event: "warning", step: STEP, name: "To-Do.md",
+      reason: `To-Do note heal failed: ${e && e.message ? e.message : String(e)}`, ...stamp() });
+  }
 }
 
 // _archivedHubPath — pure. Maps a per-day hub note under spice/meetings/hubs/
@@ -20711,6 +20791,8 @@ if (typeof module !== "undefined" && module.exports && typeof module.exports ===
     module.exports._modernizeMeetingBody = _modernizeMeetingBody;
     module.exports._archivedHubPath = _archivedHubPath;
     module.exports._stripMeetingsHubLabel = _stripMeetingsHubLabel;
+    module.exports._resetToDoSingleBody = _resetToDoSingleBody;
+    module.exports.applyToDoSingleNoteHeal = applyToDoSingleNoteHeal;
     module.exports._cleanProjectLinkName = _cleanProjectLinkName;
     module.exports._isMangledProjectField = _isMangledProjectField;
     module.exports._taskNoteChromeBody = _taskNoteChromeBody;

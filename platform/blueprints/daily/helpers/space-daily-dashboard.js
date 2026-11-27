@@ -2338,21 +2338,18 @@ class SpaceDailyDashboard {
   }
 
   /**
-   * v0.13.4: Tasks section title → open (or Templater-create) the viewed
-   * day's To-Do note, mirroring cowork-timeframe-buttons.js's `_dispatch()`
-   * open-existing-or-create dispatch shape. `dateStr` is the dashboard's
-   * `today` (the day being VIEWED, not necessarily the real today — matches
-   * every other date computation in this file).
+   * Tasks section title (and Triage) → open the one To-Do note,
+   * spice/to-do/To-Do.md, which always shows today. When it is missing it is
+   * created from the installed ranch/templates/To-Do.md. `dateStr` is kept
+   * for the call sites; the note itself picks the day.
    */
   async _openTodayToDo(dateStr, opts) {
     try {
       const appRef = (typeof globalThis !== "undefined" && globalThis.app) || null;
       const cjs = (typeof globalThis !== "undefined" && globalThis.customJS) || null;
-      const momentRef = (typeof globalThis !== "undefined" && globalThis.moment) || null;
-      if (!appRef || !momentRef) return { ok: false };
-      const m = momentRef(dateStr, "YYYY-MM-DD");
-      const folder = `spice/to-do/${m.format("YYYY/MM-MMMM")}`;
-      const filenameNoExt = `ToDo-${m.format("YYYY-MM-DD")}`;
+      if (!appRef) return { ok: false };
+      const folder = "spice/to-do";
+      const filenameNoExt = "To-Do";
       const path = `${folder}/${filenameNoExt}.md`;
 
       const existing = appRef.vault.getAbstractFileByPath(path);
@@ -2361,14 +2358,7 @@ class SpaceDailyDashboard {
         return { ok: true, no_op: true };
       }
 
-      const tpPlugin = appRef.plugins && appRef.plugins.plugins
-        ? appRef.plugins.plugins["templater-obsidian"] : null;
-      if (!tpPlugin || !tpPlugin.templater) {
-        if (typeof Notice === "function") new Notice("SpaceDailyDashboard: Templater plugin not enabled", 8000);
-        return { ok: false };
-      }
-
-      const templateSource = "ranch/templates/Today To-Do.md";
+      const templateSource = "ranch/templates/To-Do.md";
       const templateFile = appRef.vault.getAbstractFileByPath(templateSource);
       if (!templateFile) {
         if (typeof Notice === "function") new Notice(`SpaceDailyDashboard: template not found at ${templateSource}`, 8000);
@@ -2422,7 +2412,10 @@ class SpaceDailyDashboard {
             }
           }
           try {
-            return await tpPlugin.templater.create_new_note_from_template(templateFile, folder, filenameNoExt, true);
+            const body = await appRef.vault.read(templateFile);
+            const created = await appRef.vault.create(path, body);
+            appRef.workspace.openLinkText(path, "");
+            return created;
           } catch (err) {
             const msg = (err && err.message) || "";
             if (/already exists|exists/i.test(msg)) {
