@@ -234,7 +234,7 @@
       "action": {
         "type": "createFromTemplate",
         "target": "{{module_directory}}/To-Do.md",
-        "template_source": "To-Do.md"
+        "template_source": "{{templates_path}}/To-Do.md"
       }
     }
   ],

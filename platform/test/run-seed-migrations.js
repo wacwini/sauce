@@ -1121,6 +1121,16 @@ withTempVault((vault) => {
            && !todo.includes("{{"));
         ok("SEED-TODO-SINGLE-3 the old dated note is still where it was",
            helpers.fileExists(vault, "spice/to-do/2026/06-June/ToDo-2026-06-17.md"));
+        let todoButton = null;
+        try {
+            const reg = JSON.parse(helpers.readNote(vault, "ranch/nav-buttons-registry.json"));
+            todoButton = Object.values(reg.contributions || {}).flat().find((b) => b && b.id === "todo-today") || null;
+        } catch (e) {}
+        const src = todoButton && todoButton.action && todoButton.action.template_source;
+        ok("SEED-TODO-SINGLE-4 the To Do button recreates a deleted To-Do.md from ranch/templates/To-Do.md, a file that exists",
+           !!todoButton && todoButton.action.type === "createFromTemplate"
+           && todoButton.action.target === "spice/to-do/To-Do.md"
+           && src === "ranch/templates/To-Do.md" && helpers.fileExists(vault, src));
     }
 
     // ===== HC-V01330-SEED-DVGUARD-* — applyNoteChromeHeal step 4b guards the
