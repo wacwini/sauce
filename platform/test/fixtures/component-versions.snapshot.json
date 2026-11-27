@@ -1,14 +1,14 @@
 {
-  "workshop_version": "0.336.1",
+  "workshop_version": "0.337.0",
   "components": {
     "boards": "0.3.0",
     "cowork": "0.42.0",
-    "daily": "0.35.1",
+    "daily": "0.36.0",
     "meetings": "0.20.0",
     "people": "0.9.0",
     "products": "0.4.0",
     "project": "1.73.0",
-    "to-do": "0.44.1",
+    "to-do": "0.45.0",
     "journal": "0.5.4",
     "trips": "0.11.0",
     "sticky-notes": "0.11.8",
