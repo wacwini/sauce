@@ -49,7 +49,7 @@ const bar = (cls) => '```dataviewjs\nawait dv.view("ranch/views/customjs-guard",
     const nav = m.nav_buttons.find((b) => b.id === 'todo-today');
     ok('TSN-MANIFEST-2 the To Do button opens To-Do.md (creating it from the template), not a dated note',
       nav && nav.action.type === 'createFromTemplate'
-      && nav.action.target === '{{module_directory}}/To-Do.md' && nav.action.template_source === 'To-Do.md');
+      && nav.action.target === '{{module_directory}}/To-Do.md' && nav.action.template_source === '{{templates_path}}/To-Do.md');
     ok('TSN-MANIFEST-3 the to-do-today type has a breadcrumb entry',
       !!(m.breadcrumb && m.breadcrumb.types && m.breadcrumb.types['to-do-today']));
   }

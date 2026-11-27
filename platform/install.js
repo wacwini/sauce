@@ -9098,12 +9098,19 @@ function validateAndResolve(btn, sourceName, variables, history, git) {
     // resolved literals in the registry so the renderer dispatches without
     // needing per-blueprint substitution context at click time.
     const resolvedTarget = substituteLenient(btn.action.target || "", variables);
+    // A template_source that starts with a {{path}} variable (e.g.
+    // "{{templates_path}}/To-Do.md") names its own root, so it is substituted
+    // rather than placed under the blueprint's content folder.
+    const rawSource = btn.action.template_source;
+    const resolvedSource = /^\{\{\w+\}\}\//.test(rawSource)
+      ? substituteLenient(rawSource, variables)
+      : `${contentPath}/${sourceName}/${rawSource}`;
     return {
       ...btn,
       action: {
         ...btn.action,
         target: resolvedTarget,
-        template_source: `${contentPath}/${sourceName}/${btn.action.template_source}`,
+        template_source: resolvedSource,
       },
     };
   }
