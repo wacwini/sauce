@@ -901,21 +901,23 @@ process.exitCode = 1;
     let folderChildren = [];
     let rollbackActiveElement = null;
     const trigger = { focus: () => { focused++; } };
-    const files = new Map([['ranch/templates/Today To-Do.md', { path: 'ranch/templates/Today To-Do.md' }]]);
+    const files = new Map([['ranch/templates/To-Do.md', { path: 'ranch/templates/To-Do.md' }]]);
+    const created = [];
+    const opened = [];
     const app = {
       vault: {
         getAbstractFileByPath: (p) => files.get(p) || null,
         createFolder: async (p) => { events.push('folder'); files.set(p, { path: p, children: folderChildren.slice() }); },
-      },
-      fileManager: { trashFile: async (f) => { trashed++; files.delete(f.path); } },
-      plugins: { plugins: { 'templater-obsidian': { templater: {
-        create_new_note_from_template: async () => {
+        read: async (f) => (f && f.path === 'ranch/templates/To-Do.md' ? 'TEMPLATE BODY' : ''),
+        create: async (p, body) => {
           events.push('write');
           if (rejectCreate) throw new Error('persist failed');
-          return { path: 'created' };
+          created.push([p, body]);
+          return { path: p };
         },
-      } } } },
-      workspace: { openLinkText() {} },
+      },
+      fileManager: { trashFile: async (f) => { trashed++; files.delete(f.path); } },
+      workspace: { openLinkText(p) { opened.push(p); } },
     };
     const renderSafe = {
       mutateStructure: async (opts) => {
@@ -942,8 +944,17 @@ process.exitCode = 1;
       assert(success && success.ok === true, 'successful create returns ok');
       assert(events.indexOf('apply') < events.indexOf('write'), 'optimistic apply must precede persistence');
       assert(successHost._children.some((n) => /sauce-daily-todo-preview/.test(n.className)), 'optimistic preview is visible immediately');
+      assert(created.length === 1 && created[0][0] === 'spice/to-do/To-Do.md' && created[0][1] === 'TEMPLATE BODY',
+        'the one To-Do note is created from the installed To-Do template, not a dated note: ' + JSON.stringify(created));
+      assert(opened[opened.length - 1] === 'spice/to-do/To-Do.md', 'the created To-Do note is opened');
 
-      files.delete('spice/to-do/2026/07-July');
+      files.set('spice/to-do/To-Do.md', { path: 'spice/to-do/To-Do.md' });
+      const reopen = await dash._openTodayToDo('2026-07-01', { dv: {}, host: makeDashEl(), trigger });
+      assert(reopen && reopen.no_op === true && created.length === 1 && opened[opened.length - 1] === 'spice/to-do/To-Do.md',
+        'an existing To-Do note is opened for any viewed day, with no write');
+      files.delete('spice/to-do/To-Do.md');
+
+      files.delete('spice/to-do');
       rejectCreate = true;
       events.length = 0;
       const retryHost = makeDashEl();
@@ -954,8 +965,8 @@ process.exitCode = 1;
       assert(focused === 1, 'rollback restores triggering focus exactly once');
       assert(trashed === 1, 'rejected note creation compensates its newly-created empty folder');
 
-      files.delete('spice/to-do/2026/07-July');
-      folderChildren = [{ path: 'spice/to-do/2026/07-July/concurrent.md' }];
+      files.delete('spice/to-do');
+      folderChildren = [{ path: 'spice/to-do/concurrent.md' }];
       const newerFocus = { isConnected: true };
       rollbackActiveElement = newerFocus;
       await dash._openTodayToDo('2026-07-13', { dv: {}, host: makeDashEl(), trigger });

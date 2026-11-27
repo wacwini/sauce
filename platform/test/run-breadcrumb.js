@@ -97,6 +97,10 @@ const EXPECTED_TODO_TYPES = {
   'to-do-recurring': {
     ancestors: [{ label: 'lit:To-Do' }],
     current: { label: 'file:basename' }
+  },
+  'to-do-today': {
+    ancestors: [],
+    current: { label: 'lit:To-Do' }
   }
 };
 const EXPECTED_STICKY_TYPES = {

@@ -7,10 +7,15 @@ load_when: Cycle close that touches to-do's template / dialog / widget surface.
 
 Run on a deployed consumer vault after `brew upgrade sauce && sauce update --bump-pins`.
 
-## Templates
-- [ ] Open today's `ToDo-<date>.md` → renders without console errors
-- [ ] All dataviewjs blocks resolve (no stuck "Loading..." states)
-- [ ] `+ New Task` button present + clickable
+## The To-Do note
+- [ ] `spice/to-do/To-Do.md` exists after `sauce update` and is `type: to-do-today`
+- [ ] The **To Do** nav button, the ⋯ menu's **Today's To-Do**, All To-Dos' **Back to Today's To-Do** and the daily dashboard's Tasks title all open `To-Do.md`; none of them creates a `ToDo-<date>.md`
+- [ ] `To-Do.md` shows today; the week strip and month calendar switch days in place
+- [ ] Renders without console errors; no stuck "Loading..." states
+- [ ] `+ New Task` button present + clickable; **Sauce: New task** in the command palette opens the same dialog
+- [ ] Delete one of the two code blocks above `[//]: # (TODO_CHROME_END)`, type a line below the marker, then ⋯ → **Reset to Sauce layout** → the blocks come back, your line stays, and the old copy is in `.sauce-backup/to-do/`
+- [ ] ⋯ → **Reset to Sauce layout** again → "already matches", nothing written
+- [ ] Older `ToDo-<date>.md` notes are unchanged and still open
 
 ## +New Task dialog
 - [ ] Both tabs render (Today + Recurring)

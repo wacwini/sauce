@@ -2,7 +2,10 @@
  * ToDoCreateTaskInit (CustomJS) — startup script.
  *
  * Registers three Obsidian commands at customjs plugin init:
- *   `sauce:new-task`            → opens the dialog with One-shot tab preselected.
+ *   `sauce:new-task`            → opens the task dialog (TaskDialog), the same one
+ *                                 the To-Do note's New Task button opens. It used
+ *                                 to open ToDoCreateTask, which wrote a checkbox
+ *                                 line into a dated ToDo-<today>.md.
  *   `sauce:new-task-from-set`   → opens TaskSets' New from set dialog.
  *   `sauce:new-recurring-task`  → opens the dialog with Recurring tab preselected.
  *
@@ -21,7 +24,9 @@ class ToDoCreateTaskInit {
                 name: 'Sauce: New task',
                 callback: () => {
                     try {
-                        customJS.ToDoCreateTask.open({ preselectTab: 'one-shot' });
+                        const TD = customJS.TaskDialog;
+                        if (!TD || typeof TD.open !== 'function') { new Notice('Tasks are still loading — try again in a moment', 4000); return; }
+                        TD.open({ surface: 'daily', today: window.moment().format('YYYY-MM-DD') });
                     } catch (e) {
                         new Notice('Sauce: New task — ' + (e.message || e), 6000);
                     }

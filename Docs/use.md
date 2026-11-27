@@ -110,7 +110,7 @@ An installed vault has two doors. Every blueprint works by hand in Obsidian: hub
 |---|---|---|
 | `home` | A command center: greeting, quick capture, today's dashboard | `/home` |
 | `daily` | One note per day with a dashboard panel, a nav button, and a hotkey | `/daily` |
-| `to-do` | Date-routed daily to-do notes and a recurring-tasks registry | |
+| `to-do` | One To-Do note (`spice/to-do/To-Do.md`) that always shows today, with a Reset to Sauce layout menu item; older date-routed daily notes stay readable; a recurring-tasks registry | |
 | `journal` | A multi-entry journal with per-day hubs and timestamped entries | `/journal` |
 | `sticky-notes` | Quick-capture notes with per-day hubs | `/sticky-notes` |
 | `meetings` | A per-day meetings hub and individual meeting notes with attendees | `/meetings` |
